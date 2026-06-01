@@ -1,8 +1,8 @@
 ---
 title: Version History
 type: release
-related: [dmg-build-process, distribution-checklist, design-decisions, world-system, the-watcher, known_issues, productification]
-last_updated: 2026-05-31
+related: [dmg-build-process, distribution-checklist, design-decisions, world-system, the-watcher, known_issues, productification, version-control]
+last_updated: 2026-06-01
 sources: [dist/, Build/build_dmg.sh, PRODUCTIZATION_PHASE_SUMMARY.md, Docs/FIRST_LAUNCH_AND_DMG_DESIGN.md]
 ---
 
@@ -10,10 +10,13 @@ sources: [dist/, Build/build_dmg.sh, PRODUCTIZATION_PHASE_SUMMARY.md, Docs/FIRST
 
 ## Source of truth
 
-The project is **not under git**, so there is no commit log to mine. This history
-is reconstructed from the build artifacts in `dist/`, the `VERSION` in
-[[dmg-build-process]], and the dated design/summary docs. Treat the per-version
-detail as best-effort, not an authoritative changelog.
+**From v1.5 onward, `git log` is the authoritative changelog.** The project was
+placed under version control on 2026-06-01 — see [[version-control]] for the
+full git setup record.
+
+The history below covers the **pre-git era** (v0.0–v1.5). It is reconstructed
+from build artifacts in `dist/`, the `VERSION` in [[dmg-build-process]], and
+dated design docs. Treat it as best-effort, not a commit log.
 
 ## Shipped DMGs (in `dist/`)
 

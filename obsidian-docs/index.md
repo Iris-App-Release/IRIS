@@ -59,8 +59,9 @@ Obsidian vault to browse them as a graph.
 | Page | Summary | Type |
 |---|---|---|
 | [DMG Build Process](releases/dmg-build-process.md) | How `build_dmg.sh` + PyInstaller produce `Iris.app` / `Iris.dmg` | release |
-| [Version History](releases/version-history.md) | The shipped DMGs (v0.0 → 1.3) and the productization arc (no git) | release |
+| [Version History](releases/version-history.md) | The shipped DMGs (v0.0 → v1.5) and the productization arc | release |
 | [Distribution Checklist](releases/distribution-checklist.md) | Steps to cut, verify, and ship a new build | release |
+| [Version Control & GitHub](releases/version-control.md) | Git setup, what's tracked, pre-git history, GitHub Releases plan | infrastructure |
 
 ## Architecture
 
