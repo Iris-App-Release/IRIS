@@ -1,0 +1,30 @@
+{
+  "name": "The Watcher",
+  "description": "A massive, unblinking eye suspended in an endless black void. It watches.",
+  "version": "1.0",
+  "environment": {
+    "primary_mesh": "eye",
+    "secondary_elements": [],
+    "background": "sky",
+    "lighting": {
+      "sun_direction": [0.55, 0.42, 0.72],
+      "ambient_intensity": 0.1
+    }
+  },
+  "rendering": {
+    "use_bloom": false,
+    "use_parallax": true,
+    "rotation_speed": 0.0,
+    "show_icons": false,
+    "clear_color": [0.0, 0.0, 0.0]
+  },
+  "assets": {
+    "asset_dir": "the_watcher",
+    "textures": {
+      "diffuse": "eye_diffuse.png",
+      "floor_texture": "floor_checkered.png",
+      "normal": "eye_normal.png",
+      "specular": "eye_specular.png"
+    }
+  }
+}

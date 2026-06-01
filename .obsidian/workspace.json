@@ -1,0 +1,229 @@
+{
+  "main": {
+    "id": "f45c66278a9757db",
+    "type": "split",
+    "children": [
+      {
+        "id": "3d5bf0418a8f3a80",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "c37de54933c400fe",
+            "type": "leaf",
+            "state": {
+              "type": "empty",
+              "state": {},
+              "icon": "lucide-file",
+              "title": "New tab"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "7a22b8ed03d0f0a8",
+    "type": "split",
+    "children": [
+      {
+        "id": "b843bc2aac24341f",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "c807aa5d7f07b125",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "e9720c1aa6eaf403",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          },
+          {
+            "id": "2adaaf398f3538fa",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "a5bd85199c0a9ff6",
+    "type": "split",
+    "children": [
+      {
+        "id": "7f8f8c6d09db8e31",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "3c66bff4b377fdb7",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks"
+            }
+          },
+          {
+            "id": "f4231ceaf53eec2b",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links"
+            }
+          },
+          {
+            "id": "b67d91f28dc43d06",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "283dcb6edaf06a87",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "8cc4be09676124db",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "c37de54933c400fe",
+  "lastOpenFiles": [
+    "obsidian-docs/development/Claude-Interrupted.md",
+    "obsidian-docs/development/Interrupted.md",
+    "obsidian-docs/development/Untitled.md",
+    "obsidian-docs/Untitled.md",
+    "dist/Iris.app/Contents/Frameworks/Tracking/models/face_landmarker.task",
+    "dist/Iris.app/Contents/Frameworks/Tracking/models",
+    "dist/Iris.app/Contents/Frameworks/Tracking",
+    "dist/Iris-1.4.dmg",
+    "dist/rw.87481.Iris-1.4.dmg",
+    "dist/Iris.app/Contents/MacOS/Iris.cstemp",
+    "dist/Iris.app/Contents/_CodeSignature/CodeResources",
+    "dist/Iris.app/Contents/_CodeSignature",
+    "dist/Iris.app/Contents/Frameworks/Python.framework/Versions/3.11/_CodeSignature/CodeResources",
+    "dist/Iris.app/Contents/Frameworks/Python.framework/Versions/3.11/_CodeSignature",
+    "dist/Iris.app/Contents/Resources/pygame/tests/fixtures/fonts/u13079_PyGameMono-8.png",
+    "dist/Iris.app/Contents/Resources/pygame/tests/fixtures/fonts/A_PyGameMono-8.png",
+    "dist/Iris.app/Contents/Resources/pygame/pygame_icon_mac.bmp",
+    "dist/Iris.app/Contents/Resources/pygame/pygame_icon.bmp",
+    "dist/Iris.app/Contents/Resources/pygame/examples/data/teal.svg",
+    "dist/Iris.app/Contents/Resources/pygame/examples/data/static.png",
+    "dist/Iris.app/Contents/Resources/pygame/examples/data/shot.gif",
+    "dist/Iris.app/Contents/Resources/pygame/examples/data/scarlet.webp",
+    "dist/Iris.app/Contents/Resources/pygame/examples/data/red.jpg",
+    "dist/Iris.app/Contents/Resources/pygame/examples/data/player1.gif",
+    "dist/Iris.app/Contents/Resources/numpy-2.4.6.dist-info/licenses/numpy/_core/src/npysort/x86-simd-sort/LICENSE.md",
+    "dist/Iris.app/Contents/Resources/numpy-2.4.6.dist-info/licenses/numpy/random/src/splitmix64/LICENSE.md",
+    "dist/Iris.app/Contents/Resources/numpy-2.4.6.dist-info/licenses/numpy/random/src/sfc64/LICENSE.md",
+    "dist/Iris.app/Contents/Resources/numpy-2.4.6.dist-info/licenses/numpy/random/src/philox/LICENSE.md",
+    "dist/Iris.app/Contents/Resources/numpy-2.4.6.dist-info/licenses/numpy/random/src/pcg64/LICENSE.md",
+    "dist/Iris.app/Contents/Resources/numpy-2.4.6.dist-info/licenses/numpy/random/src/mt19937/LICENSE.md",
+    "dist/Iris.app/Contents/Resources/numpy-2.4.6.dist-info/licenses/numpy/random/src/distributions/LICENSE.md",
+    "dist/Iris.app/Contents/Resources/numpy-2.4.6.dist-info/licenses/numpy/fft/pocketfft/LICENSE.md",
+    "dist/Iris.app/Contents/Resources/numpy-2.4.6.dist-info/licenses/numpy/random/LICENSE.md",
+    "dist/Iris.app/Contents/Resources/assets/the_watcher/CREDITS.md",
+    "dist/Iris.app/Contents/Resources/_sounddevice_data/portaudio-binaries/README.md",
+    "obsidian-docs/releases/dmg-build-process.md",
+    "dist/Iris/_internal/numpy-2.4.6.dist-info/licenses/numpy/_core/src/npysort/x86-simd-sort/LICENSE.md",
+    "dist/Iris/_internal/numpy-2.4.6.dist-info/licenses/numpy/random/src/splitmix64/LICENSE.md",
+    "dist/Iris/_internal/numpy-2.4.6.dist-info/licenses/numpy/random/src/sfc64/LICENSE.md",
+    "dist/Iris/_internal/numpy-2.4.6.dist-info/licenses/numpy/random/src/philox/LICENSE.md",
+    "dist/Iris/_internal/numpy-2.4.6.dist-info/licenses/numpy/random/src/pcg64/LICENSE.md",
+    "dist/Iris/_internal/numpy-2.4.6.dist-info/licenses/numpy/random/src/mt19937/LICENSE.md",
+    "dist/Iris/_internal/numpy-2.4.6.dist-info/licenses/numpy/random/src/distributions/LICENSE.md",
+    "dist/Iris/_internal/numpy-2.4.6.dist-info/licenses/numpy/fft/pocketfft/LICENSE.md",
+    "dist/Iris/_internal/numpy-2.4.6.dist-info/licenses/numpy/random/LICENSE.md",
+    "obsidian-docs/known_issues.md",
+    "Untitled.canvas"
+  ]
+}

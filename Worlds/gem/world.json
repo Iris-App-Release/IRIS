@@ -1,0 +1,22 @@
+{
+  "name": "The Gem",
+  "description": "A brilliant hot-pink gemstone rotating in pure white space.",
+  "version": "1.0",
+  "environment": {
+    "primary_mesh": "gem",
+    "secondary_elements": [],
+    "background": "sky",
+    "lighting": {
+      "sun_direction": [0.85, 0.52, 0.85],
+      "ambient_intensity": 0.06
+    }
+  },
+  "rendering": {
+    "use_bloom": false,
+    "use_parallax": true,
+    "rotation_speed": 22.0,
+    "show_icons": false,
+    "floor_texture": "floor_checkered.png",
+    "clear_color": [1.0, 1.0, 1.0]
+  }
+}

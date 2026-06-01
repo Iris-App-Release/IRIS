@@ -1,0 +1,97 @@
+IRIS APP — ARCHITECTURE OVERVIEW
+================================================================================
+
+IRIS is a head-tracked spatial desktop illusion for macOS. The user's camera
+tracks their head position, and a 3-D Earth rendered on the monitor shifts
+perspective to create the illusion of looking through a window into a virtual
+world. The app can run as a desktop wallpaper (always-on, click-through) or an
+interactive demo with onboarding.
+
+FOLDER STRUCTURE
+================================================================================
+
+Launcher/
+  Entry point and app routing.
+  - app_entry.py: PyInstaller executable entry point. Routes to demo or daemon.
+  - app_engine.py: Core engine loop. Camera math, rendering, tracking, events.
+
+Engine/
+  Rendering and core graphics systems.
+  - renderer.py: Earth, Stars, Nebula, app-icon orbit rendering.
+  - bloom_postfx.py: Bloom post-processing pipeline (bright-extract → blur).
+  - shader_loader.py: GLSL compilation and texture loading.
+  - camera_math.py: Off-axis frustum, view matrices, parallax math.
+  - orbital_icons.py: macOS orbital app launcher overlay (separate from main).
+
+Tracking/
+  Head tracking and camera input.
+  - face_tracker.py: MediaPipe FaceLandmarker + Haar fallback. Outputs head
+    position (hx, hy, hz) and orientation (yaw, pitch) at ~30 fps.
+
+UI/
+  User interface and onboarding.
+  - demo_overlay.py: Glass HUD overlay for the demo window. Manages state
+    (floating preview ↔ live tracked), glass button styling, toasts.
+
+Worlds/
+  World definitions and environment system.
+  - world_loader.py: JSON-based world loader. Currently Earth only.
+
+Assets/ (lowercase — PyInstaller compatibility)
+  Textures and static resources.
+  - earth/: Earth textures, normal maps, specular maps.
+  - stars/: Milky Way background, space backgrounds.
+  - icon/: App icons (Earth, Iris branding).
+
+Shaders/ (lowercase — PyInstaller compatibility)
+  GLSL 120 shaders (vertex + fragment).
+  - earth.vert/frag, clouds.vert/frag, atmosphere.vert/frag
+  - stars.vert/frag, nebula.vert/frag
+  - post_bright.vert/frag, post_blur.vert/frag, post_composite.vert/frag
+
+Models/ (lowercase — PyInstaller compatibility)
+  MediaPipe face landmark model.
+  - face_landmarker.task: The detection model (binary).
+
+Worlds/ (lowercase — PyInstaller compatibility)
+  World JSON definitions.
+  - earth/world.json: Earth world definition and metadata.
+
+Scripts/
+  Development and utility scripts.
+  validation/: Headless simulations to test physics without GL/camera.
+    - sim_orbit.py, sim_offaxis.py, sim_viewing.py, sim_latency.py,
+      sim_vertical.py, sim_overlay.py: Validation harnesses.
+  tools/: Build and generation utilities.
+    - gen_space_background.py, make_earth_icon.py, preview_overlay.py
+
+Build/
+  Build and distribution tools.
+  - build_dmg.sh: PyInstaller bundler + DMG packager (produces Iris.dmg).
+  - parallaxctl.py: Command-line control for the wallpaper daemon.
+
+Docs/
+  Documentation.
+  - ARCHITECTURE_OVERVIEW.txt (this file)
+  - SYSTEM_FLOW.txt: How the app starts and runs.
+  - FILE_MAP.txt: Quick reference of all major files.
+
+Config/
+  Configuration and settings.
+  - (Empty for now; placeholder for future config files.)
+
+Archive/
+  Old/deprecated files (legacy .command scripts, etc).
+
+================================================================================
+KEY PRINCIPLES
+================================================================================
+
+1. Physics is frozen: Camera math, orbital mechanics, parallax — all untouched.
+2. Modular systems: Engine, Tracking, UI, Worlds are independent.
+3. PyInstaller-safe: lowercase folders (assets, shaders, models, worlds) ensure
+   bundled resources resolve correctly.
+4. Entry point: Launcher/app_entry.py routes to demo or daemon based on env.
+5. No logic changes: This reorganization is purely structural.
+
+================================================================================

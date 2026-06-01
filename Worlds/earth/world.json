@@ -1,0 +1,36 @@
+{
+  "name": "Earth",
+  "description": "Our home planet with real-time head tracking parallax",
+  "version": "1.0",
+  "environment": {
+    "primary_mesh": "earth",
+    "secondary_elements": [
+      "clouds",
+      "atmosphere"
+    ],
+    "background": "stars",
+    "lighting": {
+      "sun_direction": [1.0, 0.5, 1.0],
+      "ambient_intensity": 0.3
+    }
+  },
+  "rendering": {
+    "use_bloom": true,
+    "use_parallax": true,
+    "rotation_speed": 0.01,
+    "show_icons": true,
+    "clear_color": [0.0, 0.0, 0.012]
+  },
+  "assets": {
+    "textures": {
+      "day": "earth_day.jpg",
+      "night": "earth_night.jpg",
+      "clouds": "earth_clouds.jpg",
+      "normal": "earth_normal.jpg",
+      "specular": "earth_specular.jpg"
+    },
+    "background": {
+      "stars": "milky_way_8k.jpg"
+    }
+  }
+}

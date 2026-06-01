@@ -1,0 +1,121 @@
+IRIS APP — SYSTEM FLOW
+================================================================================
+
+HOW THE APP STARTS
+================================================================================
+
+1. User double-clicks Iris.app
+   → PyInstaller bootloader runs Launcher/app_entry.py
+
+2. app_entry.py checks PARALLAX_MODE environment variable:
+   - If "wallpaper" or "fullscreen" → runs as daemon
+   - Otherwise → runs in "demo" mode (default)
+
+3. app_entry.py imports and calls Launcher/app_engine.main()
+
+4. app_engine.py (the core engine loop):
+   a. Initializes pygame (window setup, GL context)
+   b. Loads scene (Engine/renderer.py: Earth, Stars, Nebula)
+   c. Initializes bloom post-processing (Engine/bloom_postfx.py)
+   d. Starts tracker (Tracking/face_tracker.py)
+   e. If demo mode: loads UI overlay (UI/demo_overlay.py)
+   f. Enters main rendering loop (60 Hz)
+
+THE MAIN RENDERING LOOP
+================================================================================
+
+Each frame:
+
+1. Input:
+   - Read tracker head position: (hx, hy, hz, yaw, pitch)
+   - Or read scripted idle motion (if demo preview mode, camera not started)
+   - Read UI events (mouse, keyboard)
+
+2. Update state:
+   - Apply camera math (Engine/camera_math.py):
+     * Compute off-axis frustum based on head position
+     * Apply view rotation if head orientation tracking active
+   - Update scene animations (Earth rotation, etc.)
+   - Update UI state (hover, fading, toasts)
+
+3. Render:
+   - Render scene to bloom FBO (Engine/renderer.py)
+     * Earth (day/night textures, normal maps, specular maps)
+     * Stars (parallax layers)
+     * Nebula (Milky Way background)
+   - Apply bloom post-processing (Engine/bloom_postfx.py)
+   - If demo mode: composite UI overlay on top (UI/demo_overlay.py)
+   - Display to screen
+
+4. Control:
+   - If user clicks "Enable Camera": start tracker, flip demo to live mode
+   - If user clicks "Enable Desktop Mode": spawn wallpaper daemon, revert demo
+   - If user clicks desktop toggle: write/clear ~/.parallax_off flag
+
+DEMO MODE STATES (UI/demo_overlay.py)
+================================================================================
+
+The demo has three state-driven modes that switch instantly (no reload):
+
+1. FLOATING PREVIEW (default)
+   - Camera is NOT tracking
+   - Scripted idle motion (slow sine waves on head position)
+   - UI shows: "Floating preview" status, "Enable Camera" button
+   - User sees the demo, but it responds to scripted motion, not head
+
+2. LIVE TRACKED
+   - Camera IS tracking
+   - Real head position drives parallax
+   - UI shows: "Live · head tracking on" status, "Enable Desktop Mode" button
+   - Head movements change the view instantly
+
+3. DESKTOP MODE ACTIVE (after handoff)
+   - Demo reverts to floating preview (still visible on screen)
+   - Wallpaper daemon runs in the background (independent process)
+   - UI shows: "Desktop mode active" status, "Disable Desktop Mode" button
+   - User can close the demo window or leave it as a floating preview
+
+PHYSICS & TRACKING (UNCHANGED)
+================================================================================
+
+Head tracking (Tracking/face_tracker.py):
+- Reads camera frames via OpenCV
+- Runs MediaPipe FaceLandmarker to detect 468 face landmarks
+- Falls back to Haar Cascade if MediaPipe unavailable
+- Outputs: hx, hy, hz (position), yaw, pitch (rotation)
+- Applies velocity-adaptive smoothing (1€-filter style)
+- Runs at ~30 fps (VIDEO mode)
+
+Camera math (Engine/camera_math.py):
+- Blends three INDEPENDENT components:
+  1. TRANSLATION: head position → off-axis frustum shear (parallax)
+  2. DISTANCE SCALING: head z-depth → eye-to-glass distance (size scaling)
+  3. ROTATION: head orientation → view pan (proximity-gated)
+- Produces off-axis frustum (fish-tank VR, Kooima projection)
+- View matrix applies rotation about the eye
+
+Rendering (Engine/renderer.py):
+- All shaders in GLSL 120 (OpenGL 2.1 compatibility)
+- Bloom post-processing (Engine/bloom_postfx.py) for cinematic glow
+- All math is fixed-function matrix-based (no hand-rolled matrices)
+
+WALLPAPER DAEMON
+================================================================================
+
+When user clicks "Enable Desktop Mode":
+
+1. Demo stops its tracker (releases camera)
+2. New process spawned: PARALLAX_MODE=wallpaper python app_engine.py
+3. Daemon:
+   - Runs with NOFRAME | FULLSCREEN flags (borderless, click-through)
+   - Pins window to desktop level (below Finder icons, above wallpaper)
+   - Hides from Dock (NSApplicationActivationPolicyAccessory)
+   - Polls ~/.parallax_off flag (master on/off switch)
+   - Polls ~/.parallax_icons_off flag (orbital app icons toggle)
+
+Demo window:
+- Stays open (is NOT the daemon)
+- Reverts to floating preview mode
+- Can be closed at any time without stopping the wallpaper
+
+================================================================================

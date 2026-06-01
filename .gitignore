@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# PyInstaller build artifacts
+Build/Iris/
+Build/Iris.app/
+Build/pyi/
+Build/*.dmg
+*.spec.bak
+.pyi_work/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.TemporaryItems
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Runtime / user data
+~/.iris/
+*.log
+
+# Large model files (if any)
+models/*.bin
+models/*.onnx
+models/*.tflite

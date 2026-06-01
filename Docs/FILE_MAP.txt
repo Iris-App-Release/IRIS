@@ -1,0 +1,180 @@
+IRIS APP — FILE MAP (Quick Reference)
+================================================================================
+
+LAUNCHER/
+  app_entry.py
+    • Entry point for the bundled app
+    • Routes to demo or daemon based on PARALLAX_MODE env
+    • Adds project root to sys.path for imports
+
+  app_engine.py (formerly main.py)
+    • Core engine loop: 60 Hz render, camera math, GL state, event handling
+    • Imports: FaceTracker, renderer, bloom, camera_math, overlay_ui (if demo)
+    • Entry point: main()
+
+ENGINE/
+  renderer.py
+    • Renders Earth, Stars, Nebula, orbital icons
+    • Classes: Earth, Stars, Nebula, IconOrbit, SphereWorld, CompositeWorld
+    • All shader-driven, GL 2.1 compatible
+
+  bloom_postfx.py
+    • Post-processing pipeline: bright-extract → horizontal blur → vertical blur
+    • Classes: BloomPipeline
+    • Used after scene render to add cinematic glow
+
+  shader_loader.py (formerly shader_util.py)
+    • GLSL compilation, linking, error checking
+    • Texture loading and binding (PNG/JPG → GL textures)
+    • Helpers for setting uniforms (floats, vectors, matrices)
+
+  camera_math.py (formerly orbital_math.py)
+    • Off-axis frustum (Kooima generalized perspective)
+    • View matrix (translation + rotation)
+    • Constants: CAM_BASE_Z, ZOOM_K, ROT_MAX_DEG, ROT_MAX_PITCH_DEG, etc.
+
+  orbital_icons.py
+    • Separate PyObjC Cocoa app for orbital macOS app launcher
+    • Drawn as ellipses around screen center, 60 Hz animation
+    • Window is transparent, click-through, toggle-able via ~/.parallax_icons_off
+
+TRACKING/
+  face_tracker.py (formerly tracker.py)
+    • MediaPipe FaceLandmarker + Haar Cascade fallback
+    • Outputs: hx, hy, hz (head position), yaw, pitch (orientation)
+    • Velocity-adaptive smoothing (1€ filter)
+    • Threading: runs face detection in daemon thread, main loop reads results
+
+UI/
+  demo_overlay.py (formerly overlay_ui.py)
+    • Liquid-glass HUD overlay for demo window
+    • State machine: floating preview ↔ live tracked
+    • Renders at physical Retina resolution for crisp text
+    • Classes: DemoOverlay
+    • Reads: tracking_requested, desktop_mode_requested, should_quit, live
+    • Writes: overlaid UI texture to GL quad (draw_gl)
+
+WORLDS/
+  world_loader.py (formerly world_system.py)
+    • Loads world definitions from JSON
+    • Classes: World (abstract), WorldLoader
+    • Currently only Earth is active; others are placeholders
+
+ASSETS/ (lowercase for PyInstaller)
+  earth/
+    • earth_day.jpg, earth_night.jpg, earth_clouds.jpg
+    • earth_normal.jpg, earth_specular.jpg
+
+  stars/
+    • milky_way_8k.jpg, space_background.jpg
+
+  icon/
+    • earth_icon.png (Earth icon for branding/about screen)
+
+SHADERS/ (lowercase for PyInstaller)
+  earth.vert / earth.frag
+    • Day/night blend, specular, normal mapping
+  clouds.vert / clouds.frag
+    • Cloud shell with alpha transparency
+  atmosphere.vert / atmosphere.frag
+    • Atmospheric glow (scattering effect)
+  stars.vert / stars.frag
+    • Point-sprite starfield (3 parallax layers)
+  nebula.vert / nebula.frag
+    • Inside-rendered Milky Way background
+  icon.vert / icon.frag
+    • Orbital app icons rendering
+  post_bright.vert / post_bright.frag
+    • Bright-extract for bloom
+  post_blur.vert / post_blur.frag
+    • Gaussian blur (horizontal + vertical)
+  post_composite.vert / post_composite.frag
+    • Final composite: scene + bloom → tonemapped output
+
+MODELS/ (lowercase for PyInstaller)
+  face_landmarker.task
+    • Binary MediaPipe FaceLandmarker model (468 facial landmarks)
+    • Downloaded on first run if missing; bundled in .app
+
+WORLDS/ (lowercase for PyInstaller)
+  earth/
+    • world.json: Earth world definition, metadata, object configs
+    • assets/: symlink to project Assets/earth
+
+SCRIPTS/
+  validation/
+    sim_orbit.py
+      • Headless validation: orbital icon geometry under parallax
+    sim_offaxis.py
+      • Headless validation: off-axis frustum invariants
+    sim_viewing.py
+      • Headless validation: camera math (3-component blend)
+    sim_latency.py
+      • Headless validation: tracker smoothing latency/jitter
+    sim_vertical.py
+      • Headless validation: vertical (pitch) exploration range
+    sim_overlay.py
+      • Headless validation: demo overlay state machine and render
+
+  tools/
+    gen_space_background.py
+      • Generates space background texture (not used; placeholder)
+    make_earth_icon.py
+      • Generates Earth icon from textures
+    preview_overlay.py
+      • Renders UI overlay to PNG for visual verification (no GL needed)
+
+BUILD/
+  build_dmg.sh
+    • PyInstaller bundler: compiles Launcher/app_entry.py → Iris.app
+    • Creates Info.plist with NSCameraUsageDescription
+    • Packages into Iris.dmg with create-dmg
+    • Output: dist/Iris.dmg (~256 MB), dist/Iris.app (~279 MB)
+
+  parallaxctl.py
+    • Command-line control for wallpaper daemon
+    • Commands: toggle, icons, restart, stop, config, install, status
+    • Uses ~/.parallax_off and ~/.parallax_icons_off flags
+
+DOCS/
+  ARCHITECTURE_OVERVIEW.txt (this file)
+    • High-level folder structure and design principles
+  SYSTEM_FLOW.txt
+    • How the app starts and runs, state machine, physics
+  FILE_MAP.txt (this file)
+    • Quick reference of all major files and their purposes
+
+CONFIG/
+  (Placeholder for future configuration files)
+
+ARCHIVE/
+  old_*.command, Toggle*.command, etc.
+    • Deprecated launcher scripts (kept for historical reference)
+
+================================================================================
+CRITICAL IMPORTS (Don't Break These)
+================================================================================
+
+In Launcher/app_engine.py:
+  from Tracking.face_tracker import FaceTracker
+  from Engine.renderer import Earth, Stars, Nebula, IconOrbit
+  from Engine.bloom_postfx import BloomPipeline
+  from Engine.camera_math import ... (various functions/constants)
+  [conditionally] from UI.demo_overlay import DemoOverlay
+
+In Engine/renderer.py:
+  from Engine import camera_math as om
+  from Engine.shader_loader import load_program, load_texture_2d, ...
+
+In Engine/bloom_postfx.py:
+  from Engine.shader_loader import load_program, Uniforms
+
+In Launcher/app_entry.py:
+  from Launcher.app_engine import main
+
+Validation scripts (Scripts/validation/*.py):
+  from tracker import FaceTracker
+  [etc., various project imports]
+  → May need updating if run from project root; most are headless
+
+================================================================================

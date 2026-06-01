@@ -1,0 +1,17 @@
+# Parallax Wall — Python dependencies
+# Install with: pip install -r requirements.txt
+
+pygame>=2.5.0
+PyOpenGL>=3.1.7
+numpy>=1.24.0
+opencv-python-headless>=4.8.0
+mediapipe>=0.10.9
+Pillow>=10.0.0
+
+# PyObjC frameworks (macOS only — desktop wallpaper window level + camera permission)
+# Safe to skip on non-Mac; tracker and main fall back gracefully without them.
+# NOTE: AppKit Python bindings ship INSIDE pyobjc-framework-Cocoa
+#       — there is no separate pyobjc-framework-AppKit package on PyPI.
+pyobjc-framework-Cocoa       ; sys_platform == 'darwin'
+pyobjc-framework-Quartz      ; sys_platform == 'darwin'
+pyobjc-framework-AVFoundation; sys_platform == 'darwin'
