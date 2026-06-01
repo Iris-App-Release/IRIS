@@ -1,7 +1,7 @@
 ---
 title: Current Focus
 type: reference
-related: [known_issues, head-tracking, engine-loop-and-daemon, constraints, the-watcher, the-gem, productification]
+related: [known_issues, head-tracking, engine-loop-and-daemon, constraints, the-watcher, the-gem, productification, version-control]
 last_updated: 2026-06-01
 sources: [Tracking/face_tracker.py, Launcher/app_engine.py, Engine/renderer.py, Engine/bloom_postfx.py, Scripts/tools/gen_eye_textures.py]
 ---
@@ -10,6 +10,20 @@ sources: [Tracking/face_tracker.py, Launcher/app_engine.py, Engine/renderer.py, 
 
 What's actively being worked on right now. Keep this short — move durable
 conclusions into the relevant system page and bug records into [[known_issues]].
+
+## Version control — COMPLETE (2026-06-01)
+
+The #1 catastrophic risk from [[productification]] is resolved.
+
+- `git init` + `.gitignore` (excludes `dist/`, `Build/Iris.app/`, `__pycache__`, `.pyi_work/`)
+- Initial commit: 160 files, 17 134 insertions — full v1.5 source + Obsidian wiki
+- Pushed to `github.com/Iris-App-Release/IRIS` (SSH, `~/.ssh/id_ed25519`)
+- `CLAUDE.md` added to project root — auto-loads key context for new LLM sessions
+- See [[version-control]] for the full record
+
+**Immediate next (from [[productification]] §6, Action #2):**
+Apple Developer Program enrollment ($99/yr) → Developer ID signing → notarization.
+This is Milestone 1 in the productification path and unblocks all real distribution.
 
 ## Performance pass — desktop lag while running — DONE (quick wins) (2026-06-01)
 
