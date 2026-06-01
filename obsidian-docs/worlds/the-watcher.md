@@ -34,16 +34,19 @@ animation, rendering, camera, or physics systems. Defined by
 | `background` | `void` |
 | `lighting.sun_direction` | `[0.55, 0.42, 0.72]` |
 | `lighting.ambient_intensity` | `0.1` |
-| `use_bloom` | `false` |
+| `use_bloom` | `false` *(moot — bloom removed engine-wide 2026-06-01)* |
 | `use_parallax` | `true` |
 | `rotation_speed` | `0.0` (no spin) |
 | `show_icons` | `false` |
 | `clear_color` | `[0.0, 0.0, 0.0]` (pure black) |
 | `assets.asset_dir` | `the_watcher` |
 
-The contrast with [[earth]] is the whole point: bloom **off** (the wet glint
-stays a crisp catchlight, not a glowing halo), icons **off**, no rotation, and a
-truly black clear color so the eye reads as floating in nothing.
+The wet glint stays a crisp catchlight rather than a glowing halo, icons **off**,
+no rotation, and a truly black clear color so the eye reads as floating in
+nothing. *(This used to be a deliberate contrast with [[earth]]'s bloom; since
+bloom was removed engine-wide on 2026-06-01, no world glows — the eye's crispness
+is now just the default. The Watcher also no longer gets the bloom composite's
+exposure/vignette, so it renders a touch darker and flatter than before.)*
 
 ## How it renders
 
@@ -57,8 +60,8 @@ shader (GLSL 120) gives it its biological look:
   detail.
 - **Wet cornea specular + Fresnel** — sharp over the cornea, broader on the
   sclera, with a faint moist sheen at the limb.
-- It outputs `alpha = 0` so the bloom bright-pass skips it entirely (the same
-  anti-bloom convention the orbital icons use).
+- It outputs `alpha = 0` — historically the anti-bloom mask (the bloom bright-pass
+  skipped it); now **inert** since bloom was removed, but harmless.
 
 **Eye tracking (active):** The sphere now rotates toward the viewer's detected
 head position every frame, so the iris actively follows the user. The `Eye.update(dt, hx, hy)`

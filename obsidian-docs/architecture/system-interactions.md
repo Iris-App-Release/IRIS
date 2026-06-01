@@ -21,7 +21,6 @@ Iris.app  →  launcher.py (root)        # put project root / _MEIPASS on sys.pa
                  ├─ Tracking/face_tracker.py    (head input)
                  ├─ Engine/camera_math.py       (off-axis projection)
                  ├─ Engine/renderer.py          (Earth/Eye/Stars/Nebula/IconOrbit)
-                 ├─ Engine/bloom_postfx.py      (bloom)
                  ├─ Worlds/world_runtime.py     (active world)
                  └─ UI/demo_overlay.py          (HUD, demo mode only)
 ```
@@ -40,8 +39,7 @@ graph LR
   CM -->|proj + view matrices| ENG
   WR[world-system<br/>world_runtime] -->|mesh, bg, flags| ENG
   ENG --> RN[rendering-engine<br/>renderer]
-  RN --> BL[bloom-postfx]
-  BL --> SCR[Screen]
+  RN --> SCR[Screen<br/>default framebuffer, MSAA]
   ENG --> HUD[ui-overlay<br/>draw_gl]
   HUD --> SCR
 ```

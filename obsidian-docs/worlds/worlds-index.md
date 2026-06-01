@@ -21,7 +21,7 @@ mechanism. Three worlds currently ship.
 | Renderer class(es) | `Earth` + `Stars` + `Nebula` + `IconOrbit` | `Eye` | `Gem` |
 | Secondary elements | clouds, atmosphere | — | — |
 | Background | `stars` (Milky Way) | `void` (pure black) | `void` (pure white) |
-| Bloom | **on** | **off** | **off** |
+| Bloom | *removed engine-wide (2026-06-01) — no world glows* | | |
 | Orbital icons | **on** | **off** | **off** |
 | Rotation | yes (~6°/s surface) | none (only ≤1.6° gaze drift) | 22°/s Y spin + ±25° sinusoidal X tilt |
 | Parallax | yes | yes | yes |

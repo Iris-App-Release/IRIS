@@ -3,7 +3,7 @@ title: Productification Roadmap
 type: strategy
 related: [design-decisions, version-history, distribution-checklist, world-system, worlds-index, dmg-build-process, current-focus, constraints, known_issues, system-interactions]
 last_updated: 2026-05-31
-sources: [Docs/IRIS_OVERVIEW.txt, Docs/FIRST_LAUNCH_AND_DMG_DESIGN.md, PRODUCTIZATION_PHASE_SUMMARY.md, obsidian-docs/releases/version-history.md, obsidian-docs/architecture/design-decisions.md, obsidian-docs/architecture/constraints.md, obsidian-docs/releases/distribution-checklist.md]
+sources: [Docs/IRIS_OVERVIEW.txt, Docs/FIRST_LAUNCH_AND_DMG_DESIGN.md, obsidian-docs/releases/version-history.md, obsidian-docs/architecture/design-decisions.md, obsidian-docs/architecture/constraints.md, obsidian-docs/releases/distribution-checklist.md]
 ---
 
 # Productification Roadmap

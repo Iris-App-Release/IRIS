@@ -82,10 +82,13 @@ Every field has an Earth-preserving default, so a minimal file still renders.
 
 ## Installed worlds
 
-| World | Mesh | Bloom | Icons | Background |
-|---|---|---|---|---|
-| [[earth]] | `earth` | on | on | stars |
-| [[the-watcher]] | `eye` | off | off | void |
+| World | Mesh | Icons | Background |
+|---|---|---|---|
+| [[earth]] | `earth` | on | stars |
+| [[the-watcher]] | `eye` | off | void |
+
+*(Bloom was removed engine-wide on 2026-06-01 — no world glows; the `use_bloom`
+flag in each `world.json` is retained but ignored.)*
 
 A side-by-side comparison lives in [[worlds-index]].
 
@@ -97,7 +100,7 @@ A side-by-side comparison lives in [[worlds-index]].
 | `Worlds/<name>/world.json` | World metadata + flags | [[rendering-engine]] | mesh, background, bloom, icons, colors |
 | (same) | `primary_mesh` ("earth", "eye", or "gem") | [[rendering-engine]] | choose Earth, Eye, or Gem class to draw |
 | (same) | `background` ("stars" or "sky") | [[rendering-engine]] | draw Nebula+Stars or rendered sky (deployed worlds use stars for Earth, sky for The Watcher & The Gem) |
-| (same) | `use_bloom`, `use_parallax`, etc. | [[rendering-engine]] | toggle features per world |
+| (same) | `use_parallax`, `show_icons`, etc. | [[rendering-engine]] | toggle features per world (`use_bloom` is no longer read — bloom removed 2026-06-01) |
 | (same) | Asset directory path | [[asset-pipeline]] | where to find textures for this world |
 
 Worlds are **content only** — no camera, physics, or parallax logic. Each world

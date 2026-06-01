@@ -38,9 +38,10 @@ rigid body. The benefits are real-3D-correct:
   icon's eye-space origin comes from a single mat·vec, replacing the former
   per-icon `glGetFloatv(GL_MODELVIEW_MATRIX)` (a GPU→CPU stall per icon). Result is
   pixel-identical; see the 2026-06-01 latency audit in [[log]] / [[constraints]].
-- The icon shader **discards transparent texels** and writes `alpha = 0`, so the
-  bloom bright-pass treats icons as an anti-bloom mask — they stay crisp app
-  icons instead of glowing (see [[rendering-engine]]).
+- The icon shader **discards transparent texels** and writes `alpha = 0` — this
+  was the anti-bloom mask that kept icons crisp instead of glowing. Bloom was
+  removed engine-wide (2026-06-01), so the `alpha = 0` write is now **inert** but
+  harmless; icons are crisp by default (see [[rendering-engine]]).
 
 Crucially, the in-scene icons are **purely decorative and non-interactive**: the
 engine installs no mouse monitor and runs no per-frame hit-testing on them,

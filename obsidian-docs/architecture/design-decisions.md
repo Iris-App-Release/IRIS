@@ -82,8 +82,10 @@ systems — proving the world system works as a content layer. See [[the-watcher
 pre-existing `Gem` renderer class with `make_gem(n=16)` (64 flat-shaded triangles).
 Unlike The Watcher, it is NOT a reskin of an existing mesh — it is a distinct
 geometry/shader pair (`gem.vert/frag`) that exposes flat shading, two-light specular
-(key + fill), Fresnel rim, emissive core, and iridescence. Bloom is disabled because
-the vignette post-effect conflicts with a pure-white background. The gem rotates
+(key + fill), Fresnel rim, emissive core, and iridescence. Bloom was originally
+disabled for this world because the vignette post-effect conflicted with a
+pure-white background (bloom has since been removed engine-wide — 2026-06-01 — so
+no world glows). The gem rotates
 continuously via `Gem.update(dt)` / model-space `glRotatef` — the first world with
 autonomous model-space rotation independent of the camera rig. It uses minimal
 procedural geometry with one texture asset (floor_checkered.png) for the shadow disk.
@@ -95,10 +97,19 @@ the common ground between decade-old Macs and Apple-Silicon Metal-translated GL,
 and its fixed-function matrix uniforms let shaders layer on top of the existing
 camera math without rewriting the projection system. See [[rendering-engine]].
 
-**Alpha as an anti-bloom mask.** Rather than a separate masking pass, objects that
-should stay crisp (icons, the eye) write `alpha = 0` and the bloom bright-pass
-skips them. One convention keeps icons readable and the eye biological while the
-Earth and stars still glow.
+**Alpha as an anti-bloom mask (now inert).** Rather than a separate masking pass,
+objects that should stay crisp (icons, the eye) write `alpha = 0` and the bloom
+bright-pass skipped them — one convention kept icons readable and the eye
+biological while the Earth and stars glowed. Since **bloom was removed engine-wide
+(2026-06-01)**, nothing reads that alpha any more; the shaders still write it
+(harmless) but everything now renders crisp by default. See [[rendering-engine]].
+
+**Bloom removed entirely (2026-06-01).** Bloom (glow + Reinhard tonemap + exposure
+×1.22 + vignette + chromatic aberration) was purely cosmetic and the tonemap/grade
+*veiled* the scene — removing it made every world visibly crisper, cut three
+full-screen passes, and let MSAA finally apply (the old scene FBO was not
+multisampled). Accepted trade: a slightly dimmer/flatter Earth. Full rationale in
+[[log]].
 
 ## Orbital icons: from two processes to one scene
 

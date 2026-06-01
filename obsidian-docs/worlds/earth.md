@@ -28,7 +28,7 @@ Defined by `Worlds/earth/world.json` and rendered by the `Earth`, `Stars`,
 | `background` | `stars` |
 | `lighting.sun_direction` | `[1.0, 0.5, 1.0]` |
 | `lighting.ambient_intensity` | `0.3` |
-| `use_bloom` | `true` |
+| `use_bloom` | `true` *(ignored — bloom removed engine-wide 2026-06-01)* |
 | `use_parallax` | `true` |
 | `rotation_speed` | `0.01` |
 | `show_icons` | `true` |
@@ -49,8 +49,11 @@ The `Earth` class draws **three concentric spheres** (see [[rendering-engine]]):
 Behind the planet, `Stars` provides three parallax depth layers and `Nebula`
 wraps the scene in the Milky Way. Because `show_icons` is true, [[orbital-icons]]
 can place app icons on a tilted ring that passes in front of and behind the globe
-with correct depth occlusion. Bloom ([[rendering-engine]]) is on, giving the
-cinematic glow on the Earth's bright limb.
+with correct depth occlusion. *(Bloom was removed engine-wide on 2026-06-01, so
+the Earth's bright limb no longer gets the cinematic glow — and the scene is no
+longer veiled by the bloom composite's tonemap/exposure/vignette, which made
+everything visibly crisper. The `use_bloom: true` flag in the JSON is now
+ignored. See [[rendering-engine]] / [[log]].)*
 
 ## Asset inventory
 

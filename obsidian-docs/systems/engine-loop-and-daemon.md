@@ -55,9 +55,9 @@ guide.
    clear colour, multisample).
 4. Build the scene objects (`Nebula`, `Stars`, `Earth`, `IconOrbit`; the `Eye` is
    built lazily on first use of The Watcher), the `WorldRuntime`
-   ([[world-system]]), the `BloomPipeline` (with graceful fallback), the
-   `FaceTracker` ([[head-tracking]]), and — in demo mode — the `DemoOverlay`
-   ([[ui-overlay]]).
+   ([[world-system]]), the `FaceTracker` ([[head-tracking]]), and — in demo mode —
+   the `DemoOverlay` ([[ui-overlay]]). *(No `BloomPipeline` — bloom was removed
+   2026-06-01; the scene draws straight to the default framebuffer.)*
 
 ## Frame rate
 
@@ -83,7 +83,8 @@ Each frame runs four stages:
    separate icons app.
 4. **Render** — clear with the per-world colour, build the off-axis projection +
    view modelview, rotate the sun into eye space, draw background + primary mesh
-   (+ icons), run bloom to screen, composite the HUD, and `flip()`.
+   (+ icons) straight to the default (multisampled) framebuffer, composite the
+   HUD, and `flip()`. *(The former bloom pass-2 is gone.)*
 
 ### Applying the camera math
 
@@ -91,8 +92,12 @@ Each frame runs four stages:
 via these constants and rules:
 
 - **Translation** — `cam_x/y` follow head position (`MAX_SHIFT = 4.5`, vertical
-  scaled ×0.55), smoothed by `CAM_LAG = 0.55`. The horizontal axis is negated to
-  correct for the mirrored webcam image.
+  scaled ×0.55), smoothed by a **frame-rate-independent** factor
+  `cam_alpha = 1 − e^(−dt/CAM_LAG_TAU)`, where `CAM_LAG_TAU ≈ 20.9 ms` is derived
+  from the legacy `CAM_LAG = 0.55` at the 60 fps reference (so 60 fps is
+  byte-identical to before, and the 30 fps wallpaper no longer lags ~2× more —
+  fixed 2026-06-01, see [[constraints]] + `sim_camlag`). The horizontal axis is
+  negated to correct for the mirrored webcam image.
 - **Distance scaling** — `cam_z = BASE_Z · e^(ZOOM_K · hz)` (`BASE_Z = 11.5`,
   `ZOOM_K = 0.95`, clamped to `[5.0, 34.0]`). Exponential so leaning is
   perceptually uniform; the *same* `cam_z` also couples parallax strength to
@@ -126,8 +131,8 @@ mtime-cached) so switches take effect live.
   button reconfigures **this same window** into a fullscreen, borderless,
   desktop-level, click-through wallpaper — *in the same process*. The already-
   authorized camera keeps running; SDL preserves the GL context and textures, so
-  only the size-dependent bloom FBO is rebuilt. The window stays in the Dock so
-  the user can always quit it (and quitting exits everything cleanly).
+  only the viewport + aspect are updated on resize. The window stays in the Dock
+  so the user can always quit it (and quitting exits everything cleanly).
 - **Detached daemon.** [[daemon-control]] (`parallaxctl start`) launches a
   separate `PARALLAX_MODE=wallpaper PARALLAX_DAEMON=1` process, tracked by
   `~/.iris/daemon.pid`, logging to `~/.iris/daemon.log`.
@@ -155,13 +160,12 @@ The frame loop (60 fps demo / 30 fps wallpaper) wires together all the major sys
 |---|---|---|---|
 | 1. Camera read | [[head-tracking]].head() → (hx, hy, hz, yaw, pitch) | Smoothed head state | internal blend |
 | 2. Parallax math | Head 5-tuple | `cam_x`, `cam_y`, `cam_z`, `cam_yaw`, `cam_pitch` | [[rendering-engine]] |
-| 3. Projection | `cam_*` vars | Projection matrix from [[off-axis-projection]] | [[rendering-engine]] + bloom |
+| 3. Projection | `cam_*` vars | Projection matrix from [[off-axis-projection]] | [[rendering-engine]] |
 | 4. Modelview | `cam_*` vars | Modelview matrix from [[off-axis-projection]] | [[rendering-engine]] |
 | 5. World pick | `~/.iris/preferences.json` | Active world description | [[world-system]] |
 | 6. Eye tracking | Head `(hx, hy)` | → Eye.update(dt, hx, hy) | [[the-watcher]] Eye class |
-| 7. Render scene | All above + time | Framebuffer + depth | Bloom FBO |
-| 8. Bloom | Scene FBO | Bright-pass + blur + composite | Onscreen |
-| 9. HUD overlay | User interaction | Final frame | Screen flip |
+| 7. Render scene | All above + time | Default (multisampled) framebuffer + depth | Onscreen |
+| 8. HUD overlay | User interaction | Final frame | Screen flip |
 | 10. Export state | Smoothed camera `cam_x`, `cam_y`, `cam_z` | `~/.parallax_earth_state.json` | [[orbital-icons]] Cocoa app |
 
 ## Constraints

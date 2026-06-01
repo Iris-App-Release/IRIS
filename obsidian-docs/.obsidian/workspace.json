@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "systems/off-axis-projection.md",
+                "file": "releases/version-control.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "off-axis-projection"
+              "title": "version-control"
             }
           }
         ]
@@ -183,6 +183,8 @@
   },
   "active": "0b408181d8f9da66",
   "lastOpenFiles": [
+    "systems/off-axis-projection.md",
+    "releases/version-control.md",
     "architecture/constraints.md",
     "productification.md",
     "Untitled.canvas",
@@ -190,7 +192,6 @@
     "worlds/gem.md",
     "worlds/something-i-made-for-my-friends.gif",
     "worlds/the-gem.md",
-    "systems/off-axis-projection.md",
     "Handover.md",
     "architecture/design-decisions.md",
     "development/known_issues.md",

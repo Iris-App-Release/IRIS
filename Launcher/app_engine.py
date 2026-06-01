@@ -4,15 +4,14 @@ Parallax Wall — head-tracked 3-D window illusion (cinematic edition).
 
 Renders a photoreal Earth with cloud shell, atmospheric scattering,
 multi-layer parallax stars and a Milky-Way background nebula through a custom
-GLSL pipeline with bloom post-processing. The camera offsets follow the
-viewer's head position in real time, selling the illusion that the monitor is
-a window onto a fixed virtual scene.
+GLSL pipeline. The scene draws straight to the screen (bloom post-processing was
+removed). The camera offsets follow the viewer's head position in real time,
+selling the illusion that the monitor is a window onto a fixed virtual scene.
 
 Architecture:
     Tracking/face_tracker.py      head detection (MediaPipe FaceLandmarker / Haar fallback)
     Engine/shader_loader.py        GLSL compile + texture loading
     Engine/renderer.py             Earth, Gem, Stars, Nebula classes (shader-driven)
-    Engine/bloom_postfx.py         Off-screen render → bright extract → blur → composite
     Launcher/app_engine.py         This file — camera math + main loop + GL state
 """
 
@@ -43,7 +42,6 @@ from OpenGL.GLU import gluPerspective, gluLookAt
 
 from Tracking.face_tracker import FaceTracker, DENIED
 from Engine.renderer import Earth, Stars, Nebula, IconOrbit, Eye, Gem
-from Engine.bloom_postfx import BloomPipeline
 from Engine import camera_math as om
 
 # Optional Cocoa hooks for desktop-level wallpaper mode
@@ -99,7 +97,21 @@ FPS_WALLPAPER = 30
 # ─── Camera / parallax constants (preserved from working version) ─────────────
 MAX_SHIFT  = 4.5
 BASE_Z     = 11.5     # neutral eye distance — MUST equal orbital_math.CAM_BASE_Z
-CAM_LAG    = 0.55
+
+# Camera smoothing. Historically a FIXED per-frame lerp factor (cam += 0.55·(target
+# − cam)). A fixed per-frame factor makes the time-constant frame-rate dependent:
+# the same 0.55 reaches the target ~2× slower in wall-clock time at the 30 fps
+# wallpaper cap than at the 60 fps demo, which made Desktop Mode feel laggier than
+# the onboarding preview (audit, log 2026-06-01). Fix: derive a true exponential
+# time-constant (tau) from the original 0.55 AT THE 60 fps REFERENCE RATE, then
+# each frame use a dt-aware factor  alpha = 1 − e^(−dt/tau). This reproduces the
+# calibrated 0.55 feel byte-for-byte at 60 fps and keeps the SAME wall-clock
+# responsiveness at 30 fps (and any other rate) instead of doubling the lag.
+CAM_LAG          = 0.55            # legacy per-frame factor — the calibrated feel…
+CAM_LAG_REF_FPS  = 60.0           # …as measured at this reference render rate
+CAM_LAG_TAU      = -(1.0 / CAM_LAG_REF_FPS) / math.log(1.0 - CAM_LAG)  # ≈ 0.0209 s
+CAM_LAG_DT_MAX   = 0.10           # clamp the smoothing dt so a long stall (resume
+                                  # from pause, first frame) can't snap in one step
 
 # Distance scaling (eye-to-glass distance). Exponential in head-z so the scale is
 # perceptually uniform (constant multiplier per unit lean) and spans the full
@@ -276,12 +288,19 @@ def main() -> None:
     else:
         W, H = SCREEN_W, SCREEN_H
 
-    # Request OpenGL 2.1 compatibility + MSAA
+    # Request OpenGL 2.1 compatibility + MSAA. The interactive onboarding demo
+    # uses 4× MSAA for the crispest first impression; the wallpaper/fullscreen
+    # daemon drops to 2× — at desktop scale, recomposited under every window, 4×
+    # MSAA is a real GPU/compositor cost for a barely-perceptible edge-quality
+    # gain. (MSAA is fixed at context creation, so the demo→Desktop in-process
+    # switch keeps whatever it launched with; the standalone wallpaper daemon
+    # launches with PARALLAX_MODE=wallpaper and gets 2× from the start.)
+    msaa_samples = 4 if DISPLAY_MODE == "demo" else 2
     pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MAJOR_VERSION, 2)
     pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MINOR_VERSION, 1)
     try:
         pygame.display.gl_set_attribute(pygame.GL_MULTISAMPLEBUFFERS, 1)
-        pygame.display.gl_set_attribute(pygame.GL_MULTISAMPLESAMPLES, 4)
+        pygame.display.gl_set_attribute(pygame.GL_MULTISAMPLESAMPLES, msaa_samples)
     except pygame.error:
         pass
 
@@ -344,15 +363,16 @@ def main() -> None:
     gem   = None   # The Gem — built lazily on first use, same guard pattern.
     print(f"[main] World system ready — active '{world.name}', available {world.available()}")
 
-    # Bloom (graceful fallback if FBOs fail)
-    bloom_enabled = True
-    bloom = None
-    try:
-        bloom = BloomPipeline(W_gl, H_gl)
-        print("[main] Bloom pipeline initialised.")
-    except Exception as e:
-        bloom_enabled = False
-        print(f"[main] Bloom disabled (FBO setup failed): {e}")
+    # Bloom post-processing has been removed (user decision, 2026-06-01). The
+    # scene now renders straight to the (multisampled) default framebuffer — no
+    # off-screen FBO, no bright-extract/blur/composite. This drops the glow AND
+    # the old composite grade (Reinhard tonemap, exposure ×1.22, vignette,
+    # chromatic aberration); the trade was accepted. Everything the illusion
+    # needs is generated upstream and is unaffected: off-axis parallax (camera
+    # math), star twinkle (stars shader), and the gem's facet shimmer (gem
+    # shader). A side benefit — the scene previously rendered into a
+    # NON-multisampled bloom FBO, so MSAA never actually applied; drawing to the
+    # default framebuffer now gives real anti-aliasing for the first time.
 
     # Projection is rebuilt every frame as an off-axis "window" frustum keyed to
     # the live eye position (orbital_math.off_axis_frustum). Here we only cache
@@ -483,8 +503,8 @@ def main() -> None:
             # Enable Desktop Mode → reconfigure THIS window into a click-through,
             # desktop-level wallpaper IN THE SAME PROCESS, keeping the already-
             # authorized camera/tracker running. SDL preserves the GL context and
-            # textures across the resize, so only the size-dependent bloom FBO is
-            # rebuilt. The window stays in the Dock (not accessory) so the user can
+            # textures across the resize, so only the viewport + aspect are
+            # updated. The window stays in the Dock (not accessory) so the user can
             # always quit it (Cmd-Q / Dock → Quit), and quitting exits everything.
             if overlay.desktop_mode_requested:
                 # Derive the new drawable from the backing scale measured at
@@ -500,12 +520,6 @@ def main() -> None:
                 W_gl, H_gl = int(round(W * scale)), int(round(H * scale))
                 glViewport(0, 0, W_gl, H_gl)
                 aspect = W_gl / max(1, H_gl)
-                if bloom_enabled:
-                    try:
-                        bloom = BloomPipeline(W_gl, H_gl)
-                    except Exception as e:
-                        bloom_enabled = False
-                        print(f"[main] Bloom disabled after desktop switch: {e}")
                 desktop_active = True
                 overlay.desktop_mode_requested = False
                 print("[main] Desktop Mode active (in-process wallpaper)")
@@ -558,13 +572,19 @@ def main() -> None:
                     and (abs(hx) + abs(hy) + abs(hz)) > 1e-4:
                 overlay.notify_tracking_active()
 
+        # Frame-rate-independent smoothing factor for this frame. Derived from the
+        # exponential time-constant CAM_LAG_TAU so the wall-clock responsiveness is
+        # identical at 30 and 60 fps (it equals the legacy 0.55 at 60 fps). dt is
+        # clamped so a long stall can't produce a one-frame snap.
+        cam_alpha = 1.0 - math.exp(-min(dt, CAM_LAG_DT_MAX) / CAM_LAG_TAU)
+
         # 1. TRANSLATION (head position → eye position → off-axis frustum shear).
         # Horizontal axis is negated: the webcam image is mirrored left-right, so
         # raw hx tracks the wrong way. Flipping it gives the "looking through a
         # window" feel — head right reveals the scene's left side. Vertical (hy)
         # already reads correctly, so it is left unchanged.
-        cam_x += CAM_LAG * (-hx * MAX_SHIFT        - cam_x)
-        cam_y += CAM_LAG * ( hy * MAX_SHIFT * 0.55 - cam_y)
+        cam_x += cam_alpha * (-hx * MAX_SHIFT        - cam_x)
+        cam_y += cam_alpha * ( hy * MAX_SHIFT * 0.55 - cam_y)
 
         # 2. DISTANCE SCALING (head depth → eye-to-glass distance). Leaning IN
         # (hz → +1) pushes the eye AWAY from the glass so the frustum narrows and
@@ -574,7 +594,7 @@ def main() -> None:
         # closer = larger. The same cam_z also weakens/strengthens translational
         # parallax, reproducing the spec's far-strong / close-reduced coupling.)
         cam_z_target = max(CAM_Z_MIN, min(CAM_Z_MAX, BASE_Z * math.exp(ZOOM_K * hz)))
-        cam_z       += CAM_LAG * (cam_z_target - cam_z)
+        cam_z       += cam_alpha * (cam_z_target - cam_z)
 
         # 3. ROTATION (head orientation → view pan), gated by PROXIMITY so it is
         # weak far away and dominant up close — a smooth blend, never a switch.
@@ -590,8 +610,8 @@ def main() -> None:
         pitch_in    = (pitch - LOOK_PITCH_OFFSET * prox) if tracker.has_rotation else pitch
         pitch_tgt   =  pitch_in * ROT_MAX_PITCH_RAD * prox
         pitch_tgt   =  max(-PITCH_PAN_MAX_RAD, min(PITCH_PAN_MAX_RAD, pitch_tgt))
-        cam_yaw    += CAM_LAG * (yaw_target - cam_yaw)
-        cam_pitch  += CAM_LAG * (pitch_tgt  - cam_pitch)
+        cam_yaw    += cam_alpha * (yaw_target - cam_yaw)
+        cam_pitch  += cam_alpha * (pitch_tgt  - cam_pitch)
 
         # ── Export state for the separate icons_overlay Cocoa app ─────────────
         # Since the orbital icons in the wallpaper mode's GL engine are purely
@@ -631,9 +651,9 @@ def main() -> None:
 
         dpi_scale = max(1.0, W_gl / max(1, W))
 
-        # ── Pass 1: render scene into the bloom FBO ───────────────────────────
-        if bloom_enabled:
-            bloom.bind_scene()
+        # Render straight to the default (multisampled) framebuffer — bloom
+        # removed, so there is no off-screen FBO to bind. Viewport is already set
+        # at startup and on the Desktop-Mode resize.
 
         # Per-world clear colour: Earth keeps its near-black blue; The Watcher is
         # a pure black void. (Identical value for Earth → no behavioural change.)
@@ -728,9 +748,7 @@ def main() -> None:
                 icons.draw(dpi_scale)
         glPopMatrix()
 
-        # ── Pass 2: bloom + tonemap → screen ──────────────────────────────────
-        if bloom_enabled:
-            bloom.draw_to_screen(W_gl, H_gl)
+        # (Bloom Pass 2 removed — the scene is already on screen.)
 
         # ── Onboarding HUD (demo window only) — composited over the live scene.
         # Hidden once Desktop Mode is active: the window is then a click-through

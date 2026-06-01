@@ -11,6 +11,39 @@ sources: [Tracking/face_tracker.py, Launcher/app_engine.py, Engine/renderer.py, 
 What's actively being worked on right now. Keep this short — move durable
 conclusions into the relevant system page and bug records into [[known_issues]].
 
+## Latency/perf follow-ups + bloom removal — DONE (2026-06-01)
+
+The four flagged latency/perf items are implemented, and per a follow-up user
+decision **bloom post-processing was removed entirely**. All seven headless sims
+pass (six existing + the new `sim_camlag`); `py_compile` clean. Live GPU
+confirmation still needs a GUI session (renderer/GL constraint).
+
+1. **`CAM_LAG` is now frame-rate-independent** (the most likely "slightly high"
+   latency culprit). The fixed per-frame 0.55 lerp became a true exponential
+   time-constant: `alpha = 1 − e^(−dt/CAM_LAG_TAU)`, with `CAM_LAG_TAU` derived
+   from 0.55 at the 60 fps reference. Reproduces the calibrated 60 fps feel
+   exactly **and** keeps the same wall-clock responsiveness at the 30 fps
+   wallpaper/desktop cap (was ~2× laggier). Touched frozen smoothing **with
+   explicit user approval**; new `Scripts/validation/sim_camlag.py` proves
+   backward-compat at 60 fps + frame-rate independence + the dt clamp.
+2. **Bloom removed entirely** (supersedes the earlier "honour per-world
+   `use_bloom`" approach). The scene now renders straight to the default
+   framebuffer — no off-screen FBO, no bright-extract/blur/composite. This drops
+   the glow **and** the old composite grade (Reinhard tonemap, exposure ×1.22,
+   vignette, chromatic aberration) on *every* world, Earth included; the trade was
+   accepted. Parallax (camera math), star twinkle (stars shader) and the gem's
+   facet shimmer (gem shader) are all generated upstream and are unaffected.
+   Side benefit: the scene used to render into a NON-multisampled bloom FBO, so
+   MSAA never actually applied — drawing to the default framebuffer now gives real
+   anti-aliasing. `bloom_postfx.py` is retained but no longer imported/used.
+3. **Static meshes migrated to VBOs.** `Mesh` (Earth ×3, Nebula, Eye, Gem) and the
+   `Stars` field upload geometry once instead of re-streaming ~190 k verts/frame
+   through client arrays. Transparent client-array fallback if buffer creation fails.
+4. **MSAA reduced in wallpaper/fullscreen** (4×→2×; demo keeps 4× for the crisp
+   first impression). Now actually takes effect, since the scene draws to the
+   multisampled default framebuffer (see #2). *(The bloom-downscale trim from the
+   first pass was reverted along with the rest of the bloom pipeline.)*
+
 ## Version control — COMPLETE (2026-06-01)
 
 The #1 catastrophic risk from [[productification]] is resolved.
@@ -50,11 +83,12 @@ This is Milestone 1 in the productification path and unblocks all real distribut
   lerp + a second `CAM_LAG = 0.55` per-frame exponential in `app_engine`). Because
   `CAM_LAG` is per-frame not dt-normalised, the smoothing lag **doubles at the
   30 fps wallpaper/desktop cap** (~113 ms vs ~57 ms at 60 fps) — the most likely
-  "slightly high" culprit. Making `CAM_LAG` dt-aware would fix it but touches
-  **frozen smoothing → needs explicit approval + a new sim.** Not done.
-- **Also flagged, not changed:** bloom runs in the Gem world even though
-  `gem/world.json` says `"use_bloom": false` (engine never reads the per-world
-  flag); client-side vertex arrays still re-streamed each frame (VBO migration).
+  "slightly high" culprit. ~~Making `CAM_LAG` dt-aware would fix it but touches
+  **frozen smoothing → needs explicit approval + a new sim.**~~ — **DONE
+  2026-06-01** (approved; see the follow-ups section at the top + `sim_camlag`).
+- **Also flagged, not changed:** ~~bloom runs in the Gem world even though
+  `gem/world.json` says `"use_bloom": false`; client-side vertex arrays still
+  re-streamed each frame (VBO migration).~~ — **both DONE 2026-06-01** (top section).
 - Full record in [[log]] (2026-06-01 audit entry).
 
 ## Performance pass — desktop lag while running — DONE (quick wins) (2026-06-01)
@@ -75,9 +109,9 @@ This is Milestone 1 in the productification path and unblocks all real distribut
 - **Recommended next.** ~~Remove the per-icon `glGetFloatv` pipeline stall in
   [[orbital-icons]] (compute the billboard matrix on the CPU)~~ — **DONE
   2026-06-01** (see the latency-audit section above; the per-frame
-  `_view_rot_3x3` stall was removed too). Still open: migrate static meshes to
+  `_view_rot_3x3` stall was removed too). ~~Still open: migrate static meshes to
   VBOs; optionally cheapen bloom (MSAA 4×→2×) in wallpaper mode; honour per-world
-  `use_bloom` (the Gem world asks for bloom off but still gets it).
+  `use_bloom`.~~ — **all DONE 2026-06-01** (see the follow-ups section at the top).
 - Full record in [[log]] (2026-06-01 perf entry).
 
 ## Settings camera toggle re-enable — RESOLVED (2026-05-31)

@@ -36,7 +36,7 @@ Obsidian vault to browse them as a graph.
 |---|---|---|
 | [Off-Axis Projection](systems/off-axis-projection.md) | The Kooima "window" frustum + 3-component camera math that creates the illusion | system |
 | [Head Tracking](systems/head-tracking.md) | Webcam → smoothed head 5-tuple (MediaPipe + Haar), threading, low-latency smoothing | system |
-| [Rendering Engine](systems/rendering-engine.md) | Scene objects, GLSL 120 shaders, texture loading, and the bloom pipeline | system |
+| [Rendering Engine](systems/rendering-engine.md) | Scene objects, GLSL 120 shaders, texture loading, VBO meshes (bloom removed 2026-06-01) | system |
 | [World System](systems/world-system.md) | JSON-defined, live-switchable worlds (content vs. engine) | system |
 | [Engine Loop & Daemon](systems/engine-loop-and-daemon.md) | The frame-loop conductor (60 fps demo / 30 fps wallpaper): modes, the demo state machine, wallpaper/daemon, flag files | system |
 | [UI Overlay](systems/ui-overlay.md) | The liquid-glass onboarding HUD over the live scene | system |

@@ -54,8 +54,8 @@ ww
 | `Launcher/app_engine.py` | Python | **Master frame loop** (60 fps demo / 30 fps wallpaper) — orchestrates all subsystems |
 | `Tracking/face_tracker.py` | Python | Webcam → smoothed 5-tuple `(hx, hy, hz, yaw, pitch)` via MediaPipe |
 | `Engine/camera_math.py` | Python | Off-axis Kooima frustum → projection + view matrices (FROZEN) |
-| `Engine/renderer.py` | Python + GLSL 120 | Draws Earth, Eye, Stars, Nebula, IconOrbit |
-| `Engine/bloom_postfx.py` | Python + GLSL | Half-res bloom post-process |
+| `Engine/renderer.py` | Python + GLSL 120 | Draws Earth, Eye, Stars, Nebula, IconOrbit (static meshes in VBOs) |
+| `Engine/bloom_postfx.py` | Python + GLSL | Half-res bloom post-process — **removed from the loop 2026-06-01; file retained, unused** |
 | `Worlds/world_loader.py` | Python | Reads `Worlds/<name>/world.json` from disk |
 | `Worlds/world_runtime.py` | Python | Active-world selector; polls `~/.iris/preferences.json` each frame |
 | `UI/demo_overlay.py` | Python | Liquid-glass onboarding HUD drawn into the same GL context |
@@ -72,11 +72,11 @@ Webcam → face_tracker → (hx,hy,hz,yaw,pitch)
                   app_engine (60 fps demo / 30 fps wallpaper)
                          ├─ camera_math  → proj/view matrices
                          ├─ world_runtime → active world flags
-                         ├─ renderer     → GL draw calls
-                         ├─ bloom_postfx → post-process
+                         ├─ renderer     → GL draw calls → default (MSAA) framebuffer
                          └─ demo_overlay → HUD (demo mode only)
                                               ↓
                                            Screen
+                       (bloom_postfx removed 2026-06-01 — draws straight to screen)
 ```
 
 ### File-Based IPC (the message bus)
@@ -161,6 +161,8 @@ obsidian-docs/
     "show_icons": true,
     "clear_color": [r, g, b]
   },
+  // NOTE: `use_bloom` is no longer read — bloom was removed engine-wide
+  // (2026-06-01). The key is kept in the JSON for back-compat but is ignored.
   "assets": {
     "asset_dir": "optional_subdir",
     "textures": { "day": "filename.jpg" },

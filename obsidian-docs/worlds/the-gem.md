@@ -31,7 +31,7 @@ It is intentionally **not** a visual reskin of an existing mesh: it uses the `Ge
 | `show_icons` | `false` |
 | `clear_color` | `[1.0, 1.0, 1.0]` (pure white) |
 
-**Bloom is deliberately off.** The bloom post-composite applies a vignette (`VIGNETTE = 0.42`) that would darken the white background edges into an ugly ring. Without bloom the background stays clean white, and the gem's sharp facet specular (`shininess = 256`) delivers the diamond-flash brilliance that bloom would soften. Note: `sky` is used as the background type, which renders nothing (the white clear color is the scene).
+**Bloom is off — and as of 2026-06-01 it is off everywhere** (bloom was removed engine-wide; the `use_bloom: false` flag is now moot but still correctly describes the result). This always suited the gem: the old bloom composite's vignette (`VIGNETTE = 0.42`) would have darkened the white background edges into an ugly ring, and the gem's sharp facet specular (`shininess = 256`) delivers diamond-flash brilliance that bloom would only soften. Note: `sky` is used as the background type, which renders nothing (the white clear color is the scene).
 
 ## How it renders
 

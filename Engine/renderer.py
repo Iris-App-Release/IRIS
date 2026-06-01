@@ -12,6 +12,7 @@ calls .draw(...) with sun/fill light directions (in eye space) and per-object
 animation state — the renderer manages all GL state changes internally.
 """
 
+import ctypes
 import json
 import math
 import random
@@ -20,6 +21,11 @@ from pathlib import Path
 
 import numpy as np
 from OpenGL.GL import *
+
+# Byte-offset sentinel for attribute pointers when a VBO is bound (the pointer
+# argument is then interpreted as an offset into the bound buffer, not a client
+# address). All our static buffers are tightly packed from offset 0.
+_VBO_OFFSET0 = ctypes.c_void_p(0)
 
 from Engine import camera_math as om
 from Engine.shader_loader import (
@@ -121,7 +127,16 @@ def make_gem(n=16, r_girdle=2.2, table_ratio=0.48, h_crown=0.79, h_pav=2.80):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class Mesh:
-    """Lightweight wrapper around per-attribute numpy arrays + element index."""
+    """Lightweight wrapper around per-attribute numpy arrays + element index.
+
+    The geometry is STATIC (spheres, gem facets — built once, never animated on
+    the CPU; all motion is via the modelview), so it is uploaded to GL buffer
+    objects (VBOs/EBO) ONCE at construction and the GPU reuses it every frame.
+    The previous client-side-array path re-copied every vertex from CPU to the
+    driver on each draw — for the Earth's three 96×96 spheres + the 64×64 Nebula
+    that was ~190 k vertices streamed per frame. If buffer creation is
+    unavailable for any reason the class transparently falls back to the original
+    client-array path (no behavioural change, just the old cost)."""
 
     def __init__(self, verts, norms, uvs=None, indices=None):
         self.verts = np.ascontiguousarray(verts, dtype=np.float32)
@@ -130,20 +145,68 @@ class Mesh:
         self.idx   = np.ascontiguousarray(indices, dtype=np.uint32) if indices is not None else None
         self.n_indices = len(self.idx) if self.idx is not None else len(self.verts)
 
+        # Upload to GPU buffers once. _vbo_v is the "VBOs available" sentinel;
+        # if it is None the draw path uses client arrays exactly as before.
+        self._vbo_v = self._vbo_n = self._vbo_t = self._ebo = None
+        try:
+            self._vbo_v = int(glGenBuffers(1))
+            glBindBuffer(GL_ARRAY_BUFFER, self._vbo_v)
+            glBufferData(GL_ARRAY_BUFFER, self.verts.nbytes, self.verts, GL_STATIC_DRAW)
+            self._vbo_n = int(glGenBuffers(1))
+            glBindBuffer(GL_ARRAY_BUFFER, self._vbo_n)
+            glBufferData(GL_ARRAY_BUFFER, self.norms.nbytes, self.norms, GL_STATIC_DRAW)
+            if self.uvs is not None:
+                self._vbo_t = int(glGenBuffers(1))
+                glBindBuffer(GL_ARRAY_BUFFER, self._vbo_t)
+                glBufferData(GL_ARRAY_BUFFER, self.uvs.nbytes, self.uvs, GL_STATIC_DRAW)
+            if self.idx is not None:
+                self._ebo = int(glGenBuffers(1))
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self._ebo)
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, self.idx.nbytes, self.idx, GL_STATIC_DRAW)
+            glBindBuffer(GL_ARRAY_BUFFER, 0)
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0)
+        except Exception as e:
+            print(f"[renderer] VBO upload failed ({e}); using client arrays")
+            self._vbo_v = self._vbo_n = self._vbo_t = self._ebo = None
+            glBindBuffer(GL_ARRAY_BUFFER, 0)
+
     def draw(self):
         glEnableClientState(GL_VERTEX_ARRAY)
         glEnableClientState(GL_NORMAL_ARRAY)
-        glVertexPointer(3, GL_FLOAT, 0, self.verts)
-        glNormalPointer(   GL_FLOAT, 0, self.norms)
-        if self.uvs is not None:
-            glClientActiveTexture(GL_TEXTURE0)
-            glEnableClientState(GL_TEXTURE_COORD_ARRAY)
-            glTexCoordPointer(2, GL_FLOAT, 0, self.uvs)
 
-        if self.idx is not None:
-            glDrawElements(GL_TRIANGLES, self.n_indices, GL_UNSIGNED_INT, self.idx)
+        if self._vbo_v is not None:
+            # VBO path — bind each buffer and pass a byte offset (0). The index
+            # buffer is bound for glDrawElements; everything is unbound again at
+            # the end so the floor/shadow/icon/bloom client-array draws (which
+            # share this GL state) keep working.
+            glBindBuffer(GL_ARRAY_BUFFER, self._vbo_v)
+            glVertexPointer(3, GL_FLOAT, 0, _VBO_OFFSET0)
+            glBindBuffer(GL_ARRAY_BUFFER, self._vbo_n)
+            glNormalPointer(   GL_FLOAT, 0, _VBO_OFFSET0)
+            if self.uvs is not None:
+                glClientActiveTexture(GL_TEXTURE0)
+                glEnableClientState(GL_TEXTURE_COORD_ARRAY)
+                glBindBuffer(GL_ARRAY_BUFFER, self._vbo_t)
+                glTexCoordPointer(2, GL_FLOAT, 0, _VBO_OFFSET0)
+            if self.idx is not None:
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self._ebo)
+                glDrawElements(GL_TRIANGLES, self.n_indices, GL_UNSIGNED_INT, _VBO_OFFSET0)
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0)
+            else:
+                glDrawArrays(GL_TRIANGLES, 0, self.n_indices)
+            glBindBuffer(GL_ARRAY_BUFFER, 0)
         else:
-            glDrawArrays(GL_TRIANGLES, 0, self.n_indices)
+            # Client-array fallback (original path).
+            glVertexPointer(3, GL_FLOAT, 0, self.verts)
+            glNormalPointer(   GL_FLOAT, 0, self.norms)
+            if self.uvs is not None:
+                glClientActiveTexture(GL_TEXTURE0)
+                glEnableClientState(GL_TEXTURE_COORD_ARRAY)
+                glTexCoordPointer(2, GL_FLOAT, 0, self.uvs)
+            if self.idx is not None:
+                glDrawElements(GL_TRIANGLES, self.n_indices, GL_UNSIGNED_INT, self.idx)
+            else:
+                glDrawArrays(GL_TRIANGLES, 0, self.n_indices)
 
         if self.uvs is not None:
             glDisableClientState(GL_TEXTURE_COORD_ARRAY)
@@ -510,6 +573,30 @@ class Stars:
         self.a_size  = glGetAttribLocation(self.prog, "a_size")
         self.a_twink = glGetAttribLocation(self.prog, "a_twinkle_seed")
 
+        # Static star field → upload all four attribute arrays to VBOs once
+        # (positions/colours never change; only the shader animates them per
+        # frame from u_time). Avoids re-streaming ~4.6 k points every frame.
+        # _vbo_v doubles as the "VBOs available" sentinel; None → client arrays.
+        self._vbo_v = self._vbo_c = self._vbo_s = self._vbo_t = None
+        try:
+            self._vbo_v = int(glGenBuffers(1))
+            glBindBuffer(GL_ARRAY_BUFFER, self._vbo_v)
+            glBufferData(GL_ARRAY_BUFFER, self.verts.nbytes, self.verts, GL_STATIC_DRAW)
+            self._vbo_c = int(glGenBuffers(1))
+            glBindBuffer(GL_ARRAY_BUFFER, self._vbo_c)
+            glBufferData(GL_ARRAY_BUFFER, self.colors.nbytes, self.colors, GL_STATIC_DRAW)
+            self._vbo_s = int(glGenBuffers(1))
+            glBindBuffer(GL_ARRAY_BUFFER, self._vbo_s)
+            glBufferData(GL_ARRAY_BUFFER, self.sizes.nbytes, self.sizes, GL_STATIC_DRAW)
+            self._vbo_t = int(glGenBuffers(1))
+            glBindBuffer(GL_ARRAY_BUFFER, self._vbo_t)
+            glBufferData(GL_ARRAY_BUFFER, self.twink.nbytes, self.twink, GL_STATIC_DRAW)
+            glBindBuffer(GL_ARRAY_BUFFER, 0)
+        except Exception as e:
+            print(f"[renderer] Stars VBO upload failed ({e}); using client arrays")
+            self._vbo_v = self._vbo_c = self._vbo_s = self._vbo_t = None
+            glBindBuffer(GL_ARRAY_BUFFER, 0)
+
     def draw(self, time_s: float, dpi_scale: float = 1.0):
         glUseProgram(self.prog)
         self.u.f("u_time",       time_s)
@@ -529,17 +616,33 @@ class Stars:
 
         glEnableClientState(GL_VERTEX_ARRAY)
         glEnableClientState(GL_COLOR_ARRAY)
-        glVertexPointer(3, GL_FLOAT, 0, self.verts)
-        glColorPointer(4, GL_FLOAT, 0, self.colors)
 
-        if self.a_size >= 0:
-            glEnableVertexAttribArray(self.a_size)
-            glVertexAttribPointer(self.a_size, 1, GL_FLOAT, GL_FALSE, 0, self.sizes)
-        if self.a_twink >= 0:
-            glEnableVertexAttribArray(self.a_twink)
-            glVertexAttribPointer(self.a_twink, 1, GL_FLOAT, GL_FALSE, 0, self.twink)
-
-        glDrawArrays(GL_POINTS, 0, len(self.verts))
+        use_vbo = self._vbo_v is not None
+        if use_vbo:
+            glBindBuffer(GL_ARRAY_BUFFER, self._vbo_v)
+            glVertexPointer(3, GL_FLOAT, 0, _VBO_OFFSET0)
+            glBindBuffer(GL_ARRAY_BUFFER, self._vbo_c)
+            glColorPointer(4, GL_FLOAT, 0, _VBO_OFFSET0)
+            if self.a_size >= 0:
+                glEnableVertexAttribArray(self.a_size)
+                glBindBuffer(GL_ARRAY_BUFFER, self._vbo_s)
+                glVertexAttribPointer(self.a_size, 1, GL_FLOAT, GL_FALSE, 0, _VBO_OFFSET0)
+            if self.a_twink >= 0:
+                glEnableVertexAttribArray(self.a_twink)
+                glBindBuffer(GL_ARRAY_BUFFER, self._vbo_t)
+                glVertexAttribPointer(self.a_twink, 1, GL_FLOAT, GL_FALSE, 0, _VBO_OFFSET0)
+            glDrawArrays(GL_POINTS, 0, len(self.verts))
+            glBindBuffer(GL_ARRAY_BUFFER, 0)
+        else:
+            glVertexPointer(3, GL_FLOAT, 0, self.verts)
+            glColorPointer(4, GL_FLOAT, 0, self.colors)
+            if self.a_size >= 0:
+                glEnableVertexAttribArray(self.a_size)
+                glVertexAttribPointer(self.a_size, 1, GL_FLOAT, GL_FALSE, 0, self.sizes)
+            if self.a_twink >= 0:
+                glEnableVertexAttribArray(self.a_twink)
+                glVertexAttribPointer(self.a_twink, 1, GL_FLOAT, GL_FALSE, 0, self.twink)
+            glDrawArrays(GL_POINTS, 0, len(self.verts))
 
         if self.a_size  >= 0: glDisableVertexAttribArray(self.a_size)
         if self.a_twink >= 0: glDisableVertexAttribArray(self.a_twink)

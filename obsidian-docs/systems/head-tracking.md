@@ -157,8 +157,10 @@ smoothed like the rest.
 `hx` and `hy` from `tracker.head()` are now consumed by **two** systems in
 `app_engine.py`'s frame loop:
 
-1. **Off-axis frustum** (existing) — translates `cam_x`/`cam_y` via `CAM_LAG`
-   lerp to produce the parallax window shift.
+1. **Off-axis frustum** (existing) — translates `cam_x`/`cam_y` via the
+   (now frame-rate-independent) `cam_alpha = 1 − e^(−dt/CAM_LAG_TAU)` smoothing to
+   produce the parallax window shift (see [[constraints]]; was a fixed `CAM_LAG`
+   per-frame lerp until 2026-06-01).
 2. **Eye gaze** (new, 2026-05-31) — passed as `eye.update(dt, hx, hy)` to the
    `Eye` renderer, which smooths them with its own `GAZE_LERP = 0.10` and rotates
    the eyeball sphere so the iris points toward the viewer.

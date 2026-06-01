@@ -14,7 +14,8 @@ sources: [Engine/renderer.py, Engine/shader_loader.py, Engine/bloom_postfx.py, s
 The rendering engine turns world *content* into pixels. Given the projection and
 view matrices from [[off-axis-projection]] and a description of what to draw from
 [[world-system]], it composes the scene (sphere, clouds, stars, nebula, eye,
-icons), then runs a bloom post-process for a cinematic finish.
+icons) and draws it straight to the screen. (A bloom post-process used to run
+here for a cinematic finish; it was **removed 2026-06-01** — see below.)
 
 It targets **OpenGL 2.1 / GLSL 120** on purpose. That legacy compatibility
 profile is the common ground between decade-old Macs and Apple-Silicon machines
@@ -31,14 +32,18 @@ The engine spans three files:
   and animation).
 - `Engine/shader_loader.py` — GLSL compile/link helpers, a cached uniform setter,
   and texture loading.
-- `Engine/bloom_postfx.py` — the bloom post-processing pipeline.
+- `Engine/bloom_postfx.py` — the (now-unused) bloom post-processing pipeline.
+  Retained in the tree but no longer imported or run since bloom was removed.
 
 ## Scene objects (`renderer.py`)
 
 Geometry helpers: `make_sphere` (UV-sphere, pole-clamped UVs) and `make_gem`
 (flat-shaded brilliant-cut facets). A small `Mesh` wrapper holds per-attribute
-numpy arrays and draws via client-side vertex arrays (fine for these vertex
-counts). The render classes:
+numpy arrays and uploads them **once to GL buffer objects (VBOs/EBO)** at
+construction; the static geometry is then reused every frame instead of being
+re-streamed from the CPU (a transparent client-array fallback remains if buffer
+creation fails). `Stars` uploads its four attribute arrays the same way. The
+render classes:
 
 - **`Earth`** — three concentric spheres: surface (`R = 2.6`), an independently
   spinning cloud shell (`R = 2.625`, just above the surface to avoid z-fighting),
@@ -67,14 +72,14 @@ counts). The render classes:
   horizontal disk drawn before the gem's rotation push. Fully procedural — no
   textures. See [[gem]].
 
-## Anti-bloom alpha convention
+## Anti-bloom alpha convention (now inert)
 
-A neat trick ties the renderer to the post-processor: the **alpha channel doubles
-as an anti-bloom mask**. Objects that should stay crisp rather than glow — the
-orbital icons and the eyeball — write `alpha = 0`, and the bloom bright-pass
-skips those pixels. The Earth and stars keep `alpha ≥ 1` and bloom normally. This
-is why icons look like solid app icons and the eye reads as biological, not
-magical, without any separate masking pass.
+Historically the **alpha channel doubled as an anti-bloom mask**: objects that
+should stay crisp rather than glow — the orbital icons and the eyeball — write
+`alpha = 0`, and the bloom bright-pass skipped those pixels. With bloom removed
+(2026-06-01) nothing reads that alpha any more, so the convention is **inert** —
+the icon/eye shaders still write `alpha = 0` (harmless), but it no longer affects
+the image. Everything now renders crisp by default.
 
 ## Shaders (`shaders/`, GLSL 120)
 
@@ -88,12 +93,12 @@ magical, without any separate masking pass.
 | `eye` | The Watcher's bloodshot sclera + wet cornea |
 | `gem` | Faceted crystal (Fresnel + emissive) |
 | `icon` | Orbital icon billboards (alpha-discard) |
-| `post_bright` | Bright-extract for bloom |
-| `post_blur` | Separable Gaussian blur |
-| `post_composite` | Final composite + tonemap + vignette |
+| `post_bright` | Bright-extract for bloom *(unused — bloom removed)* |
+| `post_blur` | Separable Gaussian blur *(unused — bloom removed)* |
+| `post_composite` | Final composite + tonemap + vignette *(unused — bloom removed)* |
 
 (`post_quad.vert` is the shared full-screen-quad vertex shader the post passes
-reuse.)
+reuse. The three `post_*` pairs remain in `shaders/` but are no longer loaded.)
 
 ## Shader loader (`shader_loader.py`)
 
@@ -104,21 +109,23 @@ they aren't looked up per frame, with typed setters (`i`, `f`, `v2`, `v3`, `v4`,
 `flip_v` option — equirectangular maps are uploaded *un-flipped* so the north
 pole lands at the top UV row. See [[asset-pipeline]].
 
-## Bloom pipeline (`bloom_postfx.py`)
+## Bloom pipeline (`bloom_postfx.py`) — REMOVED 2026-06-01
 
-`BloomPipeline` manages a scene FBO (colour + depth) plus a ping/pong pair at
-half resolution (`BLOOM_DOWNSCALE = 2`). Per frame:
+Bloom was removed. The scene now renders **straight to the default
+(multisampled) framebuffer** with no off-screen FBO and no post-process passes.
+`BloomPipeline` still exists in `bloom_postfx.py` for reference but is no longer
+imported or run.
 
-1. **Bright-extract** the scene into the (downscaled) ping buffer
-   (`THRESHOLD = 0.68`, `SOFTNESS = 0.50`).
-2. **Horizontal blur** ping → pong (`BLUR_RADIUS = 1.8`).
-3. **Vertical blur** pong → ping (separable Gaussian).
-4. **Composite** scene + bloom to the screen with tonemapping
-   (`BLOOM_STRENGTH = 1.10`, `EXPOSURE = 1.22`, `VIGNETTE = 0.42`, a touch of
-   chromatic `ABERRATION = 0.0025`).
-
-If FBO support is missing it degrades to a plain blit. Per-world, bloom can be
-turned off entirely (The Watcher does this via `use_bloom: false`).
+What it used to do (for context): a scene FBO + ping/pong blur buffers at
+`BLOOM_DOWNSCALE = 2`, then bright-extract → 2× separable blur → composite with
+Reinhard tonemap (`EXPOSURE = 1.22`, `VIGNETTE = 0.42`, `ABERRATION = 0.0025`,
+`BLOOM_STRENGTH = 1.10`). Why it went: the glow was purely cosmetic and the
+composite's tonemap/exposure/vignette **veiled the scene** (the "faded" look) —
+removing it made every world visibly crisper, dropped three full-screen passes,
+and — because the old scene FBO was *not* multisampled — let MSAA actually take
+effect for the first time. The accepted trade is that Earth is a little dimmer/
+flatter without the exposure+vignette grade. Full rationale in [[log]]
+(2026-06-01 "Bloom post-processing removed" entry).
 
 ## Data flow
 
@@ -131,11 +138,12 @@ turned off entirely (The Watcher does this via `use_bloom: false`).
 | Sun direction (world space) | Per-object shade + specular | (framebuffer) | lighting |
 | Time (`t_s`) | Rotation, animation | (framebuffer) | Earth spin, star twinkle, etc. |
 | Head position from [[head-tracking]] (for Eye tracking) | Eye iris rotation | (framebuffer) | gaze follows viewer |
-| Bloom parameters | Bloom post-process FBO | (framebuffer) | cinematic bloom + tonemap |
 
 ## Constraints
 
-- GL 2.1 / GLSL 120 only; client-side vertex arrays (no VBOs).
+- GL 2.1 / GLSL 120 only. Static meshes (Earth/Nebula/Eye/Gem via `Mesh`, plus
+  `Stars`) now use **VBOs**, uploaded once; the floor/shadow/icon/HUD quads remain
+  small client-side arrays.
 - Renders at the native Retina **drawable** size (not window size) for crisp
   output; render capped at 30 fps in wallpaper/fullscreen, 60 fps in the demo, on
   M1/M2 (see [[constraints]] — the wallpaper cap matches the ~30 Hz head input).

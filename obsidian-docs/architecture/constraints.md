@@ -60,16 +60,19 @@ by [[headless-simulation]].
   ignore the hint). See [[head-tracking]].
 - The priority is explicitly **latency/stability over accuracy** — smooth at the
   capped rate beats precise-but-jittery (see [[design-decisions]]).
-- **`CAM_LAG` smoothing is frame-rate dependent (known latency quirk).** The
-  engine's second smoothing layer (`cam_x += CAM_LAG·(target − cam_x)`, etc.,
-  `CAM_LAG = 0.55`) is applied **per frame, not dt-normalised**, so its
-  time-constant scales with frame rate: ~57 ms to 90 % at the 60 fps demo but
-  **~113 ms at the 30 fps wallpaper/desktop cap**. The illusion therefore feels
-  measurably laggier once Desktop Mode drops to 30 fps. This sits on top of the
-  tracker's own (frozen) velocity-adaptive lerp and MediaPipe's ~34 ms/68 ms p95.
-  `CAM_LAG`/smoothing is **frozen physics** — making it dt-aware is the right fix
-  but needs explicit approval and a fresh `sim_latency` guard. See the 2026-06-01
-  audit in [[log]].
+- **`CAM_LAG` smoothing is now frame-rate-independent (fixed 2026-06-01).** The
+  engine's second smoothing layer used to apply a fixed per-frame factor
+  (`cam += 0.55·(target − cam)`), so its time-constant scaled with frame rate
+  (~57 ms to 90 % at 60 fps but ~113 ms at the 30 fps wallpaper/desktop cap —
+  Desktop Mode felt measurably laggier). It now uses a true exponential
+  time-constant: `cam_alpha = 1 − e^(−dt/CAM_LAG_TAU)`, with `CAM_LAG_TAU ≈ 20.9 ms`
+  derived from the original `0.55` at the 60 fps reference. Result: 60 fps is
+  byte-identical to before; 30 fps holds the **same wall-clock** responsiveness.
+  This touched **frozen smoothing** and so was done with explicit user approval
+  plus a dedicated guard — `Scripts/validation/sim_camlag.py` (backward-compat at
+  60 fps + frame-rate independence + the `CAM_LAG_DT_MAX = 0.10 s` stall clamp).
+  It still sits on top of the tracker's own (frozen) velocity-adaptive lerp and
+  MediaPipe's ~34 ms/68 ms p95. See the 2026-06-01 entries in [[log]].
 
 ## Performance posture (it is a *wallpaper*)
 
@@ -86,11 +89,14 @@ in-app one. The boundaries that keep it cheap:
   modelview **once** and builds each billboard on the CPU (per-icon read-back
   gone — N stalls/frame → 1). Both are pixel-identical to the read-back. Do not
   reintroduce a `glGet*` in the per-frame path.
-- **Keep streamed geometry small.** All meshes use client-side vertex arrays (no
-  VBOs), re-uploaded every frame, so vertex count is a direct per-frame cost. The
-  [[the-gem]] floor was a flat plane over-subdivided to 21,600 verts; it is now 6
-  (`_FLOOR_DIVS = 1`) — pixel-identical, since perspective-correct UV
-  interpolation handles the convergence.
+- **Static geometry lives in VBOs (since 2026-06-01).** The `Mesh` class
+  (Earth ×3 spheres, Nebula, Eye, Gem) and the `Stars` field upload their arrays
+  to GL buffer objects once instead of re-streaming ~190 k verts/frame from the
+  CPU (transparent client-array fallback if buffer creation fails). The remaining
+  small client-side arrays (gem floor/shadow, icon + HUD quads) are cheap. Vertex
+  count still matters: the [[the-gem]] floor was a flat plane over-subdivided to
+  21,600 verts; it is now 6 (`_FLOOR_DIVS = 1`) — pixel-identical, since
+  perspective-correct UV interpolation handles the convergence.
 - **State export is throttled to ≤30 Hz** (`~/.parallax_earth_state.json`) —
   writing faster just re-serialised identical 30 Hz head data to disk in the
   render thread.
@@ -121,12 +127,16 @@ in-app one. The boundaries that keep it cheap:
 
 - **OpenGL 2.1 / GLSL 120 only** — the compatibility profile shared by old Macs
   and Apple-Silicon Metal-translated GL. Shaders rely on fixed-function matrix
-  uniforms; client-side vertex arrays (no VBOs).
+  uniforms; static meshes use **VBOs** (small UI/floor/icon quads stay client-side).
 - Renders at the **native Retina drawable** size (read from the live GL
   viewport), not the window size.
-- **Anti-bloom alpha convention:** objects that must stay crisp (orbital icons,
-  the eye) write `alpha = 0` so the bloom bright-pass skips them. Bloom params:
-  threshold 0.68, half-res downscale, exposure 1.22 (see [[rendering-engine]]).
+- **MSAA** is requested at context creation: 4× for the demo, **2× for
+  wallpaper/fullscreen**. It only began to take effect on 2026-06-01 — previously
+  the scene rendered into a non-multisampled bloom FBO, which bypassed it.
+- **Bloom removed (2026-06-01).** The scene draws straight to the default
+  framebuffer; there is no post-process. The old "anti-bloom alpha = 0" convention
+  in the icon/eye shaders is now inert (nothing reads it). `bloom_postfx.py` and
+  the `post_*` shaders remain in the tree but are unused. See [[rendering-engine]].
 - Scene scale anchors: Earth surface `R = 2.6`, clouds 2.625, atmosphere 2.85,
   Earth/Eye at world `z = −10`, nebula shell `R = 95`, orbit ring radius 4.2 at
   63° tilt.
