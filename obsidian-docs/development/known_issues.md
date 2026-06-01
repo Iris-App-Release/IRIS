@@ -2,7 +2,7 @@
 title: Known Issues
 type: reference
 related: [head-tracking, constraints, engine-loop-and-daemon, dmg-build-process, ui-overlay, current-focus]
-last_updated: 2026-05-31
+last_updated: 2026-06-01
 sources: [Tracking/face_tracker.py, Launcher/app_engine.py, UI/demo_overlay.py, launcher.py, Build/build_dmg.sh]
 ---
 
@@ -11,6 +11,45 @@ sources: [Tracking/face_tracker.py, Launcher/app_engine.py, UI/demo_overlay.py, 
 Tracked bugs with their root cause and resolution — newest first. Each entry is
 meant to be the *durable* record: once something is understood here, it should
 never have to be re-derived from chat history or source again.
+
+---
+
+## [RESOLVED 2026-06-01] Demo buttons grey out a few seconds after hovering
+
+**Symptom.** Resting the mouse on a demo HUD button greyed it out "a couple
+seconds" later, over an area noticeably **larger than the button's hitbox**. The
+user suspected the clickable hitbox was smaller than the hover-grey region.
+
+**How it was diagnosed.** Reproduced headlessly: drove a real `MOUSEMOTION` onto
+the primary button, then advanced `update()` for 6 s of simulated idle with no
+further input. `hover` stayed `"primary"` and `hover_t` stayed `1.0`, yet
+`_ctrl_alpha` fell to `0.34` — the whole control cluster dimmed while the button
+was clearly hovered.
+
+**Root cause — NOT the hitbox.** The hit-test and the grey fill use the *same*
+`self._buttons[key]` rect (`sim_overlay` check 7 confirms `_hit` is exact), so
+they cannot disagree. The real cause is the **idle fade**:
+`DemoOverlay.update()` computed `idle = now - _last_input`, and `_last_input` only
+refreshes on `MOUSEMOTION` / `MOUSEBUTTONDOWN`. A stationary mouse emits no
+events, so holding the cursor on a button — an *engaged* state — counted as idle
+and the entire control layer (status pill + every button + scrim) faded to 34 %
+after 4 s. That whole-layer dim is the "area bigger than the hitbox" the user saw.
+
+**Fix.** `UI/demo_overlay.py:update()` — treat an active hover as engagement:
+
+```python
+idle = 0.0 if self.hover is not None else (self._now() - self._last_input)
+```
+
+Controls stay fully lit while the cursor rests on any control; the idle fade
+resumes the moment it moves off. (Edge note: if the cursor leaves the window
+without a final in-bounds motion event, `hover` can stay set and keep the cluster
+lit — acceptable, and the desired "engaged" behaviour when parked on a control.)
+
+**Files modified.** `UI/demo_overlay.py` (one line in `update()`).
+
+**Validation.** `sim_overlay.py` all 26 checks pass; the headless repro now keeps
+`_ctrl_alpha` at 1.0 while hovering. See [[ui-overlay]] (idle-fade behaviour).
 
 ---
 

@@ -2,7 +2,7 @@
 title: Orbital Icons
 type: system
 related: [off-axis-projection, rendering-engine, engine-loop-and-daemon, daemon-control, headless-simulation, earth, constraints]
-last_updated: 2026-05-31
+last_updated: 2026-06-01
 sources: [Engine/orbital_icons.py, Engine/renderer.py, Engine/camera_math.py, shaders/icon.vert, shaders/icon.frag]
 ---
 
@@ -33,7 +33,11 @@ rigid body. The benefits are real-3D-correct:
   behind the Earth and is hidden; the near arc passes in front.
 - True perspective scaling, because the billboard keeps its real eye-space depth
   (the modelview's 3×3 is overwritten with a scaled identity, but the translation
-  column — and thus depth — is preserved).
+  column — and thus depth — is preserved). As of 2026-06-01 the billboard is built
+  **on the CPU**: the Earth-origin modelview is read **once** per frame and each
+  icon's eye-space origin comes from a single mat·vec, replacing the former
+  per-icon `glGetFloatv(GL_MODELVIEW_MATRIX)` (a GPU→CPU stall per icon). Result is
+  pixel-identical; see the 2026-06-01 latency audit in [[log]] / [[constraints]].
 - The icon shader **discards transparent texels** and writes `alpha = 0`, so the
   bloom bright-pass treats icons as an anti-bloom mask — they stay crisp app
   icons instead of glowing (see [[rendering-engine]]).

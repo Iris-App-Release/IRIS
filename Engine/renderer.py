@@ -820,26 +820,39 @@ class IconOrbit:
         # Icons are purely decorative spatial elements — no projection / hit-test
         # work is done here (that added per-frame gluProject stalls and click
         # latency for zero benefit on a click-through desktop layer).
+        #
+        # Billboard maths is done on the CPU. Previously each icon read the
+        # modelview back with glGetFloatv(GL_MODELVIEW_MATRIX) — a GPU→CPU
+        # pipeline stall PER ICON, every frame. Instead we read the Earth-origin
+        # modelview ONCE and derive each icon's billboard from it: the billboard
+        # linear block is always diag(ICON_WORLD_SIZE), and only the translation
+        # column (the icon origin in eye space) changes — a single CPU mat·vec.
+        # Pixel-identical to the old per-icon read-back; N stalls → 1 per frame.
+        s = om.ICON_WORLD_SIZE
+        # glGetFloatv returns column-major [col][row]; .T gives the math-order
+        # modelview A (A[row][col]) at the Earth origin.
+        A = np.array(glGetFloatv(GL_MODELVIEW_MATRIX), dtype=np.float32).T
+        glPushMatrix()
         for ico in self.icons:
             angle  = om.icon_angle(ico["phase"], self.t)
             radius = om.icon_radius(self.t, ico["bob_phase"])
             lx, ly, lz = om.orbital_local_pos(angle, radius)
 
-            glPushMatrix()
-            glTranslatef(float(lx), float(ly), float(lz))
-
-            # Billboard: overwrite the modelview 3×3 with a scaled identity but
-            # keep the translation column → true depth + perspective scaling.
-            m = np.array(glGetFloatv(GL_MODELVIEW_MATRIX), dtype=np.float32)
-            s = om.ICON_WORLD_SIZE
-            for c in range(3):
-                for r in range(3):
-                    m[c][r] = s if c == r else 0.0
+            # Icon origin in eye space (keeps true depth → perspective scaling
+            # AND z-buffer occlusion against the Earth, exactly as before).
+            p = A @ np.array([lx, ly, lz, 1.0], dtype=np.float32)
+            # Billboard modelview in GL column-major layout: scaled-identity 3×3
+            # (faces the camera) with the eye-space origin as the translation col.
+            m = np.array([[s, 0.0, 0.0, 0.0],
+                          [0.0, s, 0.0, 0.0],
+                          [0.0, 0.0, s, 0.0],
+                          [float(p[0]), float(p[1]), float(p[2]), 1.0]],
+                         dtype=np.float32)
             glLoadMatrixf(m)
 
             glBindTexture(GL_TEXTURE_2D, ico["tex"])
             glDrawArrays(GL_TRIANGLE_FAN, 0, 4)
-            glPopMatrix()
+        glPopMatrix()
 
         glDisableClientState(GL_TEXTURE_COORD_ARRAY)
         glDisableClientState(GL_VERTEX_ARRAY)

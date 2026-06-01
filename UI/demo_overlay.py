@@ -519,7 +519,14 @@ class DemoOverlay:
 
     def update(self, dt: float) -> None:
         # Idle-fade the control cluster so it never dominates the illusion.
-        idle = self._now() - self._last_input
+        # Resting the cursor ON a control is an *engaged* state, not idle: the
+        # mouse only emits MOUSEMOTION while it actually moves, so without this a
+        # stationary hover let the whole cluster grey out after 4 s even though
+        # the user was clearly pointing at a button (read as "the buttons grey a
+        # couple seconds after I hover, over an area bigger than the hitbox" —
+        # the whole control layer dims, not just the pill). Keep it lit while any
+        # control is hovered.
+        idle = 0.0 if self.hover is not None else (self._now() - self._last_input)
         ca_target = 0.34 if idle > 4.0 else 1.0
         self._ctrl_alpha += (ca_target - self._ctrl_alpha) * min(1.0, dt * 5.0)
 

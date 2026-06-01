@@ -2,8 +2,8 @@
 title: UI Overlay (Demo HUD)
 type: system
 related: [engine-loop-and-daemon, head-tracking, world-system, headless-simulation, asset-pipeline, distribution-checklist]
-last_updated: 2026-05-31
-fixed: [font-fallback-bitmap, retina-best-res-surface, aa-rounded-corners]
+last_updated: 2026-06-01
+fixed: [font-fallback-bitmap, retina-best-res-surface, aa-rounded-corners, idle-fade-respects-hover]
 sources: [UI/demo_overlay.py, Launcher/app_engine.py, Config/Strings.json, Docs/preview/]
 ---
 
@@ -149,7 +149,12 @@ frame:
     [[known_issues]] for the prior bug where this re-enable was silently blocked.
   - *Community* is a "coming soon" placeholder.
 - **Toasts**, smooth per-button hover animation, and an **idle fade** (the control
-  cluster dims to ~34% after 4 s of no input).
+  cluster dims to ~34% after 4 s of no input). The idle timer treats an **active
+  hover as engagement** — while the cursor rests on any control, `idle` is held at
+  0 so the cluster stays fully lit (a stationary mouse emits no `MOUSEMOTION`, so
+  without this a held hover used to dim the whole layer after 4 s, which read as
+  "the buttons grey out, over an area bigger than the hitbox" — see
+  [[known_issues]]).
 
 ## Cross-process state it owns
 

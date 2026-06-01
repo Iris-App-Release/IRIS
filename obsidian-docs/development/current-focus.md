@@ -25,6 +25,38 @@ The #1 catastrophic risk from [[productification]] is resolved.
 Apple Developer Program enrollment ($99/yr) → Developer ID signing → notarization.
 This is Milestone 1 in the productification path and unblocks all real distribution.
 
+## Overlay greying on hover — RESOLVED (2026-06-01)
+
+- **Fixed.** Demo buttons no longer grey out while the cursor rests on them. The
+  4 s idle fade was treating a stationary hover as idle (the mouse emits no events
+  when held still), so the whole control cluster dimmed while a button was clearly
+  hovered — read by the user as "the grey area is bigger than the hitbox." The
+  hitbox was never the problem (`_hit` and the grey fill share one rect).
+- **Fix:** `UI/demo_overlay.py:update()` — `idle = 0.0 if self.hover is not None
+  else (now - _last_input)`. Full record in [[known_issues]] / [[ui-overlay]].
+
+## Latency audit — render-path stalls removed; root cause is the frozen pipeline (2026-06-01)
+
+- **The two user-suspected causes do NOT hold.** The [[the-gem]] checkered floor
+  was already reduced to 6 verts (perf pass below). "All 3 worlds loaded at once"
+  is false: `WorldRuntime` holds one world def; `Eye`/`Gem` build lazily and
+  cache; only the active world draws (fast switching = caching, not concurrency).
+- **Two GPU→CPU `glGetFloatv` stalls removed** (both were the "recommended next"
+  below): the per-frame `_view_rot_3x3` (now `mv[:3,:3]` from the CPU matrix) and
+  the **per-icon** billboard read-back in `IconOrbit.draw` (now one read + CPU
+  billboard; N stalls → 1). Pixel-identical (billboard diff 1.9e-6).
+- **Headline head→photon latency is dominated by the FROZEN pipeline**, not render
+  cost: MediaPipe ~34 ms / 68 ms p95 + **two** smoothing layers (tracker adaptive
+  lerp + a second `CAM_LAG = 0.55` per-frame exponential in `app_engine`). Because
+  `CAM_LAG` is per-frame not dt-normalised, the smoothing lag **doubles at the
+  30 fps wallpaper/desktop cap** (~113 ms vs ~57 ms at 60 fps) — the most likely
+  "slightly high" culprit. Making `CAM_LAG` dt-aware would fix it but touches
+  **frozen smoothing → needs explicit approval + a new sim.** Not done.
+- **Also flagged, not changed:** bloom runs in the Gem world even though
+  `gem/world.json` says `"use_bloom": false` (engine never reads the per-world
+  flag); client-side vertex arrays still re-streamed each frame (VBO migration).
+- Full record in [[log]] (2026-06-01 audit entry).
+
 ## Performance pass — desktop lag while running — DONE (quick wins) (2026-06-01)
 
 - **Symptom.** Opening other apps stuttered and desktop responsiveness dropped
@@ -40,9 +72,12 @@ This is Milestone 1 in the productification path and unblocks all real distribut
   2. **[[the-gem]] floor 21,600 → 6 verts** (`_FLOOR_DIVS 60→1`; flat plane needs 2
      triangles) and checks 10× larger (`_FLOOR_TILE 1.0→10.0`). Pixel-identical.
   3. **State export throttled to ≤30 Hz** (was a synchronous disk write every frame).
-- **Recommended next (not yet done).** Remove the per-icon `glGetFloatv` pipeline
-  stall in [[orbital-icons]] (compute the billboard matrix on the CPU); migrate
-  static meshes to VBOs; optionally cheapen bloom (MSAA 4×→2×) in wallpaper mode.
+- **Recommended next.** ~~Remove the per-icon `glGetFloatv` pipeline stall in
+  [[orbital-icons]] (compute the billboard matrix on the CPU)~~ — **DONE
+  2026-06-01** (see the latency-audit section above; the per-frame
+  `_view_rot_3x3` stall was removed too). Still open: migrate static meshes to
+  VBOs; optionally cheapen bloom (MSAA 4×→2×) in wallpaper mode; honour per-world
+  `use_bloom` (the Gem world asks for bloom off but still gets it).
 - Full record in [[log]] (2026-06-01 perf entry).
 
 ## Settings camera toggle re-enable — RESOLVED (2026-05-31)

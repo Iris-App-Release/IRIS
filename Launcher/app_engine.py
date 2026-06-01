@@ -257,18 +257,6 @@ def _hide_from_dock() -> None:
         print(f"[cocoa] hide-from-dock failed: {e}")
 
 
-def _view_rot_3x3() -> np.ndarray:
-    """
-    Read the current GL_MODELVIEW matrix (after gluLookAt, before any
-    per-object transforms) and return its upper-left 3×3 rotation block.
-    This rotates world-space directions (sun, fill) into eye space — the
-    coordinate frame every fragment shader does its lighting math in.
-    """
-    m  = glGetFloatv(GL_MODELVIEW_MATRIX)
-    mv = np.array(m, dtype=np.float32).T   # OpenGL stores column-major
-    return mv[:3, :3]
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 #  Main
 # ══════════════════════════════════════════════════════════════════════════════
@@ -671,8 +659,11 @@ def main() -> None:
         mv = om.view_matrix(cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
         glLoadMatrixf(np.ascontiguousarray(mv.T, dtype=np.float32))
 
-        # Sun in EYE space (every shader does its math there)
-        view_rot = _view_rot_3x3()
+        # Sun in EYE space (every shader does its math there). The view rotation
+        # is the upper-left 3×3 of the modelview we just built on the CPU — use it
+        # directly instead of reading GL_MODELVIEW_MATRIX back, which forced a
+        # GPU→CPU pipeline stall every single frame for a value we already have.
+        view_rot = mv[:3, :3]
         sun_eye  = (view_rot @ sun_world).tolist()
         fill_eye = (view_rot @ fill_world).tolist()
 

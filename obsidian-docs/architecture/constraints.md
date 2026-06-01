@@ -60,6 +60,16 @@ by [[headless-simulation]].
   ignore the hint). See [[head-tracking]].
 - The priority is explicitly **latency/stability over accuracy** — smooth at the
   capped rate beats precise-but-jittery (see [[design-decisions]]).
+- **`CAM_LAG` smoothing is frame-rate dependent (known latency quirk).** The
+  engine's second smoothing layer (`cam_x += CAM_LAG·(target − cam_x)`, etc.,
+  `CAM_LAG = 0.55`) is applied **per frame, not dt-normalised**, so its
+  time-constant scales with frame rate: ~57 ms to 90 % at the 60 fps demo but
+  **~113 ms at the 30 fps wallpaper/desktop cap**. The illusion therefore feels
+  measurably laggier once Desktop Mode drops to 30 fps. This sits on top of the
+  tracker's own (frozen) velocity-adaptive lerp and MediaPipe's ~34 ms/68 ms p95.
+  `CAM_LAG`/smoothing is **frozen physics** — making it dt-aware is the right fix
+  but needs explicit approval and a fresh `sim_latency` guard. See the 2026-06-01
+  audit in [[log]].
 
 ## Performance posture (it is a *wallpaper*)
 
@@ -70,9 +80,12 @@ in-app one. The boundaries that keep it cheap:
 - **Match render rate to input rate** (30 Hz, above) — the single biggest lever;
   it ~halves GPU + compositor load with no visible parallax change.
 - **No per-frame `glGet*` in principle.** `glGetFloatv(GL_MODELVIEW_MATRIX)`
-  forces a GPU→CPU pipeline stall; it still appears once/frame in `_view_rot_3x3`
-  and per-icon in `IconOrbit.draw` ([[orbital-icons]]) — flagged for CPU-side
-  matrix math (see [[log]] 2026-06-01 follow-ups).
+  forces a GPU→CPU pipeline stall. The two that remained were removed on
+  2026-06-01: `_view_rot_3x3` now slices the CPU-built `mv` matrix
+  (`view_rot = mv[:3,:3]`), and `IconOrbit.draw` ([[orbital-icons]]) now reads the
+  modelview **once** and builds each billboard on the CPU (per-icon read-back
+  gone — N stalls/frame → 1). Both are pixel-identical to the read-back. Do not
+  reintroduce a `glGet*` in the per-frame path.
 - **Keep streamed geometry small.** All meshes use client-side vertex arrays (no
   VBOs), re-uploaded every frame, so vertex count is a direct per-frame cost. The
   [[the-gem]] floor was a flat plane over-subdivided to 21,600 verts; it is now 6
