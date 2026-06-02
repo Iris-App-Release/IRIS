@@ -48,6 +48,8 @@ os.environ.setdefault("OPENCV_AVFOUNDATION_SKIP_AUTH", "1")
 import cv2
 import numpy as np
 
+from Tracking.filters import OneEuroFilter, gated_predict
+
 # ── Logging ─────────────────────────────────────────────────────────────────--
 # The shipped .app is built --windowed, so Python's stdout/stderr are DISCARDED:
 # every print() in the camera path was invisible in the field, which is a big part
@@ -256,6 +258,29 @@ class FaceTracker:
     _RESP_V_HI_ROT = 0.120   # rotation speed at which responsiveness is maxed
     _RESP_MAX_ROT  = 0.75    # rotation lerp ceiling at full speed (vs _LERP_ROT=0.40)
 
+    # ── Predictive conditioning (FINAL stage; see Tracking/filters.py) ──────────
+    # Applied to the already-smoothed signal: a 1€ filter strips residual REST
+    # jitter (low cutoff when slow) while staying low-lag in motion (cutoff rises
+    # with speed), and a velocity predictor extrapolates forward to HIDE the
+    # pipeline latency (MediaPipe ~34 ms + downstream smoothing + display). The
+    # predictor is velocity-GATED, so at rest it adds exactly nothing — it can
+    # only cut motion lag, never inject jitter (proven in sim_predict).
+    #
+    # CALIBRATE LIVE: _PREDICT_LEAD is the primary knob. Raise it → snappier, head
+    # "leads" your motion more; raise too far → it rubber-bands / overshoots on
+    # quick direction reversals. The 1€ cutoffs trade rest-smoothness vs motion-lag.
+    _EURO_MIN_CUTOFF     = 1.2     # Hz — position rest smoothing (lower = smoother)
+    _EURO_BETA           = 1.5     # position speed→cutoff gain (higher = less lag)
+    _EURO_D_CUTOFF       = 1.0     # Hz — velocity (derivative) smoothing
+    _EURO_MIN_CUTOFF_ROT = 1.2     # Hz — rotation rest smoothing
+    _EURO_BETA_ROT       = 1.5     # rotation speed→cutoff gain
+    _PREDICT_LEAD        = 0.070   # s — how far ahead to extrapolate (PRIMARY knob)
+    _PREDICT_MAX_DT      = 0.050   # s — cap on inter-sample extrapolation (anti-runaway)
+    _PV_LO               = 0.15    # units/s — speed where position prediction engages
+    _PV_HI               = 0.90    # units/s — speed where position prediction is full
+    _PV_LO_ROT           = 0.15    # units/s — rotation prediction gate lo
+    _PV_HI_ROT           = 0.90    # units/s — rotation prediction gate hi
+
     # How long to sleep when paused (sec)
     _PAUSED_TICK = 0.25
     # How long to back off after a camera-open failure before retrying
@@ -276,6 +301,18 @@ class FaceTracker:
         # first start(), then AUTHORIZED / DENIED / UNAVAILABLE. The engine reads
         # this to give the UI honest feedback instead of a permanent "Live" lie.
         self.permission = "unknown"
+
+        # Predictive conditioning. The 1€ filters live ONLY in the worker thread
+        # (touched solely in _publish), so they need no lock; the lock guards only
+        # the published scalars + velocities + timestamp that head() reads.
+        self._f_x     = OneEuroFilter(self._EURO_MIN_CUTOFF, self._EURO_BETA, self._EURO_D_CUTOFF)
+        self._f_y     = OneEuroFilter(self._EURO_MIN_CUTOFF, self._EURO_BETA, self._EURO_D_CUTOFF)
+        self._f_z     = OneEuroFilter(self._EURO_MIN_CUTOFF, self._EURO_BETA, self._EURO_D_CUTOFF)
+        self._f_yaw   = OneEuroFilter(self._EURO_MIN_CUTOFF_ROT, self._EURO_BETA_ROT, self._EURO_D_CUTOFF)
+        self._f_pitch = OneEuroFilter(self._EURO_MIN_CUTOFF_ROT, self._EURO_BETA_ROT, self._EURO_D_CUTOFF)
+        self._vx = self._vy = self._vz = 0.0      # filtered velocities (units/sec)
+        self._vyaw = self._vpitch = 0.0
+        self._t_pub: float | None = None          # monotonic time of last publish
 
     # ── Public API ─────────────────────────────────────────────────────────────
     def start(self) -> str:
@@ -326,9 +363,30 @@ class FaceTracker:
         return state
 
     def head(self) -> tuple:
-        """Return (head_x, head_y, head_z, yaw, pitch) thread-safely."""
+        """Return the PREDICTED (head_x, head_y, head_z, yaw, pitch), thread-safe.
+
+        The worker publishes 1€-filtered values + filtered velocities + a publish
+        timestamp; here we extrapolate ``value + velocity·lead`` forward to hide
+        the pipeline latency. The lead also covers the time elapsed since the last
+        ~30 Hz sample, so the 60 fps render keeps moving smoothly between tracker
+        updates instead of stair-stepping. Velocity-gated (a still head is
+        returned untouched → no rest jitter) and clamped to each channel's range."""
+        now = time.monotonic()
         with self._lock:
-            return self._hx, self._hy, self._hz, self._yaw, self._pitch
+            hx, hy, hz = self._hx, self._hy, self._hz
+            yaw, pitch = self._yaw, self._pitch
+            vx, vy, vz = self._vx, self._vy, self._vz
+            vyaw, vpitch = self._vyaw, self._vpitch
+            t_pub = self._t_pub
+        if t_pub is None:                      # nothing published yet
+            return hx, hy, hz, yaw, pitch
+        lead = self._PREDICT_LEAD + min(now - t_pub, self._PREDICT_MAX_DT)
+        px = gated_predict(hx, vx, lead, self._PV_LO, self._PV_HI, -1.0, 1.0)
+        py = gated_predict(hy, vy, lead, self._PV_LO, self._PV_HI, -1.0, 1.0)
+        pz = gated_predict(hz, vz, lead, self._PV_LO, self._PV_HI, -0.70, 1.0)
+        pyaw   = gated_predict(yaw,   vyaw,   lead, self._PV_LO_ROT, self._PV_HI_ROT, -1.0, 1.0)
+        ppitch = gated_predict(pitch, vpitch, lead, self._PV_LO_ROT, self._PV_HI_ROT, -1.0, 1.0)
+        return px, py, pz, pyaw, ppitch
 
     def set_tracking(self, enabled: bool) -> None:
         with self._lock:
@@ -343,11 +401,25 @@ class FaceTracker:
             self._stop = True
 
     # ── Internal state writers ────────────────────────────────────────────────
-    def _write(self, x: float, y: float, z: float,
-               yaw: float = 0.0, pitch: float = 0.0) -> None:
+    def _publish(self, x: float, y: float, z: float,
+                 yaw: float = 0.0, pitch: float = 0.0) -> None:
+        """Final conditioning (worker thread only): 1€-filter each channel, capture
+        its clean velocity, and store the filtered value + velocity + timestamp for
+        head() to predict from. The filter objects are touched only here, so they
+        need no lock; the lock guards just the published scalars."""
+        t = time.monotonic()
+        dt = 0.0 if self._t_pub is None else (t - self._t_pub)
+        fx = self._f_x.filter(x, dt)
+        fy = self._f_y.filter(y, dt)
+        fz = self._f_z.filter(z, dt)
+        fyaw   = self._f_yaw.filter(yaw, dt)
+        fpitch = self._f_pitch.filter(pitch, dt)
         with self._lock:
-            self._hx = x; self._hy = y; self._hz = z
-            self._yaw = yaw; self._pitch = pitch
+            self._hx, self._hy, self._hz = fx, fy, fz
+            self._yaw, self._pitch = fyaw, fpitch
+            self._vx, self._vy, self._vz = self._f_x.velocity, self._f_y.velocity, self._f_z.velocity
+            self._vyaw, self._vpitch = self._f_yaw.velocity, self._f_pitch.velocity
+            self._t_pub = t
 
     def _drift_back(self) -> tuple:
         """Smoothly relax toward (0,0,0,0,0) when no face is detected / disabled."""
@@ -428,7 +500,7 @@ class FaceTracker:
                         cap = None
                         self.active = False
                     last_open_failure = 0.0   # toggle-back should reopen instantly
-                    self._write(*self._drift_back())
+                    self._publish(*self._drift_back())
                     time.sleep(self._PAUSED_TICK)
                     continue
 
@@ -445,7 +517,7 @@ class FaceTracker:
                         log.warning("camera open failed — retrying after %.0fs backoff",
                                     self._RETRY_BACKOFF)
                         self.active = False
-                        self._write(*self._drift_back())
+                        self._publish(*self._drift_back())
                         continue
                     last_open_failure = 0.0
                     self.active = True
@@ -548,7 +620,7 @@ class FaceTracker:
         result = ctx["landmarker"].detect_for_video(mp_img, self._next_video_ts(ctx))
 
         if not result.face_landmarks:
-            self._write(*self._drift_back())
+            self._publish(*self._drift_back())
             return
 
         lm = result.face_landmarks[0]
@@ -611,7 +683,7 @@ class FaceTracker:
         if abs(d_pitch) > self._DEAD_ROT: spitch += resp_rot * d_pitch
         ctx["smooth_yaw"], ctx["smooth_pitch"] = syaw, spitch
 
-        self._write(raw_x, raw_y, raw_z, syaw, spitch)
+        self._publish(raw_x, raw_y, raw_z, syaw, spitch)
 
     # ── Haar per-frame step ───────────────────────────────────────────────────
     def _step_haar(self, frame, ctx: dict) -> None:
@@ -627,7 +699,7 @@ class FaceTracker:
             minSize=(20, 20), maxSize=(200, 200),
         )
         if not len(faces):
-            self._write(*self._drift_back())
+            self._publish(*self._drift_back())
             return
 
         areas = [w * h for (x, y, w, h) in faces]
@@ -664,4 +736,4 @@ class FaceTracker:
             (ctx["smooth_sz"] / ctx["baseline"]) - 1.0,
             -0.70, 1.0,
         ))
-        self._write(raw_x, raw_y, raw_z)
+        self._publish(raw_x, raw_y, raw_z)
