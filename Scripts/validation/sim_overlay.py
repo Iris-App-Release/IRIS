@@ -94,13 +94,19 @@ def main() -> int:
           repr(o._primary()))
     check("status reads 'Floating preview'", o._status_text() == "Floating preview")
 
-    # ── 2. Enable Camera → instant live ────────────────────────────────────────
+    # ── 2. Enable Camera → live, but Desktop Mode only AFTER camera is granted ──
     print("\nEnable Camera:")
     _click(o, o, "primary")
     check("flips to live (State B)", o.live is True)
     check("raised tracking_requested", o.tracking_requested is True)
     check("persisted onboarded", bool(o._pref("onboarded", False)) is True)
-    check("primary now 'Enable Desktop Mode'",
+    # The bottom action button OWNS one slot: while the camera is settling it
+    # reports the in-flight state and is a no-op — it does NOT yet offer Desktop
+    # Mode (the swap waits for the grant, per the new bottom-action spec).
+    check("primary shows 'Starting camera…' while settling",
+          o._primary() == ("Starting camera…", "none"), repr(o._primary()))
+    o.notify_tracking_active()   # engine: real head data arrived → camera granted
+    check("primary becomes 'Enable Desktop Mode' once granted",
           o._primary() == ("Enable Desktop Mode", "enable_desktop"), repr(o._primary()))
 
     # ── 3. Enable Desktop → revert to floating + daemon ────────────────────────
@@ -153,6 +159,39 @@ def main() -> int:
     check("surface has drawn content", _has_content(surf))
     o3.render_surface()  # no change
     check("re-render is cached (not dirty)", o3._dirty is False)
+
+    # ── 8. Tabs, world-nav arrows, preview-suspend signal ──────────────────────
+    print("\nTabs / arrows / preview suspend:")
+    o4 = DemoOverlay(W, H, scale=S, daemon_running=False, desktop_paused=False)
+    check("opens on Worlds tab", o4._active_tab == "worlds")
+    check("Worlds tab → preview_active True (engine renders scene)",
+          o4.preview_active is True)
+    # World-nav arrows cycle the active world instantly (no carousel/animation).
+    keys = o4._world_keys
+    start = o4.active_world
+    _click(o4, o4, "world_next")
+    check("right arrow advances world",
+          o4.active_world == keys[(keys.index(start) + 1) % len(keys)],
+          f"{start} → {o4.active_world}")
+    _click(o4, o4, "world_prev")
+    check("left arrow returns to start", o4.active_world == start, o4.active_world)
+    check("arrow selection persisted to prefs",
+          str(o4._pref("world", None)) == start)
+    # Switching to Settings/Community suspends the preview and exposes the page.
+    _click(o4, o4, "tab:settings")
+    check("Settings tab active", o4._active_tab == "settings")
+    check("Settings tab → preview_active False (engine skips scene)",
+          o4.preview_active is False)
+    check("Settings exposes camera_toggle", "camera_toggle" in o4._buttons)
+    check("Settings hides world-nav arrows", "world_prev" not in o4._buttons)
+    check("Settings renders a content card", _has_content(o4.render_surface()))
+    _click(o4, o4, "tab:community")
+    check("Community tab → preview_active False", o4.preview_active is False)
+    check("Community renders a content card", _has_content(o4.render_surface()))
+    _click(o4, o4, "tab:worlds")
+    check("returning to Worlds restores preview_active True",
+          o4.preview_active is True)
+    check("Worlds restores world-nav arrows", "world_prev" in o4._buttons)
 
     print()
     if _fail:

@@ -11,6 +11,29 @@ sources: [Tracking/face_tracker.py, Launcher/app_engine.py, Engine/renderer.py, 
 What's actively being worked on right now. Keep this short — move durable
 conclusions into the relevant system page and bug records into [[known_issues]].
 
+## Demo HUD reorganization — first draft DONE (2026-06-01)
+
+The demo overlay was reorganized from a bottom-clustered HUD into an **app-like
+three-tab layout** (Worlds · Community · Settings). Full design record in
+[[ui-overlay]]. Iterating with the user (run → adjust). All seven headless sims
+pass (`sim_overlay` updated + extended); `py_compile` clean.
+
+- **Tab bar** (top-centre, always visible) drives `self._active_tab`.
+- **Worlds tab:** world-name pill + edge **nav arrows** (replace the old vertical
+  world-picker pill list; instant switching, no carousel) + a **bottom-centred
+  action group** (status line + the single Enable Camera → Desktop Mode pill).
+  The old scattered Desktop-Mode / Live-Head-Tracking corner pills were removed.
+- **Settings / Community:** solid white full-page cards (camera toggle /
+  "Coming Soon").
+- **Instant hover** — `hover_t` is now binary (no `dt` easing). The old ~0.15–0.3 s
+  ease read as sluggish; this was the user's top-priority quality fix.
+- **World-preview suspend** — `overlay.preview_active` (Worlds tab only); the
+  engine skips the whole 3-D scene draw on Settings/Community (clears to a fixed
+  neutral dark, *not* `world.clear_color`, so the Gem's white clear can't hide the
+  card). See [[engine-loop-and-daemon]].
+- **Untouched (frozen):** white-pill visual language + corner radii; camera math,
+  physics, shaders.
+
 ## Latency/perf follow-ups + bloom removal — DONE (2026-06-01)
 
 The four flagged latency/perf items are implemented, and per a follow-up user

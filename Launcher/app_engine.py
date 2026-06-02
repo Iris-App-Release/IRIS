@@ -651,6 +651,21 @@ def main() -> None:
 
         dpi_scale = max(1.0, W_gl / max(1, W))
 
+        # ── World-preview suspend (demo only) ─────────────────────────────────
+        # When the demo shows a non-Worlds tab (Settings / Community), the live
+        # 3-D preview is fully hidden behind the solid card, so rendering it is
+        # wasted GPU. Skip the ENTIRE scene draw: clear to a neutral dark, then
+        # composite only the HUD card and flip. The preview restores the instant
+        # the Worlds tab is reselected (overlay.preview_active flips True). Never
+        # applies once Desktop Mode is active — the wallpaper must keep rendering.
+        if (DISPLAY_MODE == "demo" and not desktop_active
+                and overlay is not None and not overlay.preview_active):
+            glClearColor(0.05, 0.05, 0.06, 1.0)
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+            overlay.draw_gl(W_gl, H_gl)
+            pygame.display.flip()
+            continue
+
         # Render straight to the default (multisampled) framebuffer — bloom
         # removed, so there is no off-screen FBO to bind. Viewport is already set
         # at startup and on the Desktop-Mode resize.
