@@ -2,7 +2,7 @@
 title: Known Issues
 type: reference
 related: [head-tracking, constraints, engine-loop-and-daemon, dmg-build-process, ui-overlay, current-focus]
-last_updated: 2026-06-01
+last_updated: 2026-06-02
 sources: [Tracking/face_tracker.py, Launcher/app_engine.py, UI/demo_overlay.py, launcher.py, Build/build_dmg.sh]
 ---
 
@@ -11,6 +11,142 @@ sources: [Tracking/face_tracker.py, Launcher/app_engine.py, UI/demo_overlay.py, 
 Tracked bugs with their root cause and resolution — newest first. Each entry is
 meant to be the *durable* record: once something is understood here, it should
 never have to be re-derived from chat history or source again.
+
+---
+
+## [RESOLVED 2026-06-02] Enclosure zoom felt wrong: grid stretched/deepened and the gem SHRANK on lean-in; the ~15 cm look distorted the grid
+
+**Symptom.** In the Grid Room and the Gem world, leaning IN made the grid squares
+*expand and stretch* (perceived depth roughly doubled) and the floating gem get
+*smaller* — the opposite of the intended "move in = zoom in." The object of
+interest should grow as you approach. Separately, the rotational "look" near
+~15 cm distorted/sheared the grid (creating a fake "looking" warp) instead of
+cleanly rotating the view once enveloped. Desired: depth movement is a genuine
+**forward translation** (the camera moves INTO the room and the gem grows with
+honest perspective), and the look fades in only once *fully enveloped*, when the
+front rim is already off-screen.
+
+**Root cause.** The enclosure model added earlier the same day (entry below) made
+the depth response `cz = BASE_Z·e^(−ZOOM_K·hz)` — leaning IN *shortened* `cz`,
+which WIDENS the off-axis frustum. That is the geometrically-correct *fixed-window*
+result (press your eye to a window and the aperture subtends a wider angle), but in
+this rig a foreground object at `z = −10` has on-screen size ∝ `cz/(cz+10)`, so a
+smaller `cz` **shrinks** it and stretches the receding grid. Window-correct, but
+the wrong *feel*: the user wants to move INTO the world, not flatten their eye to
+the glass. The look-gate `[0.7, 1.0]` also began ramping while the rim was still on
+screen, so the rotation (a modelview pan under the off-axis frustum) sheared the
+visible grid edge — read as "distortion."
+
+**Fix — forward dolly (a per-world mechanism, not a sign flip).** For
+`enveloping = true` worlds the engine now HOLDS `cz = BASE_Z` (FOV constant at 58°
+— no lens zoom) and instead translates the whole scene toward the eye by
+`dolly = clamp(DOLLY_GAIN·hz, [DOLLY_MIN, DOLLY_MAX])` world units along −z, baked
+into the modelview (`mv = view_matrix(...) @ T(0,0,dolly)`). Leaning in dollies the
+camera forward into the room: the gem grows with honest perspective (≈2.5× at full
+lean), the walls slide past, and the front rim expands off-screen until it clears
+the near plane (= enveloped). The look-gate is tightened to `[0.88, 1.0]`
+(`ROT_GATE_LO/HI`), tuned so the dolly has already carried the rim off-screen
+before any pan engages — so the look can never shear a visible grid edge. Object
+worlds set `dolly ≡ 0` and keep the telephoto `cz`, so their modelview/feel is
+**byte-identical** (verified: max |Δcz| = 0 over the head-z range; `sim_viewing` /
+`sim_vertical` / `sim_offaxis` / `sim_orbit` unchanged). **`camera_math.py` is
+untouched** — the dolly is a modelview translate and the gate lo/hi are call args.
+
+**Files.** `Launcher/app_engine.py` (DOLLY_* constants, per-world depth-response
+block, modelview dolly, raised ROT_GATE_LO), `Worlds/world_runtime.py`
+(`enveloping` docstring), `Scripts/validation/sim_envelop.py` (rewritten guard).
+`Worlds/grid_room/world.json` + `Worlds/gem/world.json` are unchanged (still
+`enveloping: true`).
+
+**Validation.** Rewrote `sim_envelop.py` to pin the dolly invariants: constant FOV;
+monotone forward dolly; the foreground gem GROWS on lean-in (208→747 px,
+2.53× neutral→enveloped); rim past the near plane when enveloped and bezel-locked
+exactly at neutral; look zero through the approach and the rim already off-screen
+the moment it engages; C¹ gate; object path untouched. **All 10 headless sims
+pass.** Live GL "feel" tuning of `DOLLY_GAIN` / `ROT_GATE_LO` still wants a GUI
+pass (standing renderer constraint).
+
+**Remaining risks / notes.** `DOLLY_GAIN = 13` / `ROT_GATE_LO = 0.88` are tuned so
+the rim clears the frame right as the look begins; they are live-tunable and may
+want a GUI pass. With the dolly the rim is only *exactly* bezel-locked at the
+neutral resting pose (it expands outward as you move in) — this is inherent to the
+chosen "move forward" model and is the intended read (you pass through the opening).
+**Zoom-out floor (`DOLLY_MIN = 0`):** the neutral, bezel-locked framing is a hard
+limit on the way out — leaning back past neutral does NOT pull the camera further
+out (you dolly in from there and back out only *to* it). This is a deliberate UX
+limit (the bezel-locked grid is the canonical resting view), pinned by `sim_envelop`,
+not a geometry constraint. The two illusion methods are now documented as a pattern
+in [[viewing-models]] for authoring future worlds. See [[off-axis-projection]],
+[[grid-room]], [[the-gem]], [[constraints]].
+
+> [!note] Update (2026-06-02, grid + sphere merge) — the look-gate part of this fix
+> was superseded the same day. The "look only once fully enveloped" gate
+> (`proximity(hz, [0.88→0.75, 1.0])`) gave a *sequential* feel; per a user decision to
+> merge the good parts of both world types, the enclosure look now engages early/wide
+> like Earth and is instead **amplitude-capped** while the rim is on screen
+> (`prox = engage(hz)·amp(hz)`, engine `LOOK_*` constants; `LOOK_AMP_LO` derived from
+> `DOLLY_GAIN`). The forward-dolly *depth* model and the `DOLLY_MIN = 0` floor are
+> unchanged. `DOLLY_GAIN` is now **15.5** (not 13). See [[what-makes-perspective-optimal]],
+> [[viewing-models]], [[current-focus]] and the 2026-06-02 merge entry in [[log]].
+
+---
+
+## [SUPERSEDED 2026-06-02] Grid Room "zoom" felt backwards; could look around / peer past the bezel at forearm distance
+
+> **Superseded by the entry above (same day).** Flipping the `cz` sign fixed the
+> *direction* of the complaint but introduced the inverse problem — the
+> window-correct frustum-widen made foreground objects shrink and the grid
+> stretch on approach. The forward-dolly entry above is the model that shipped.
+> Kept for the reasoning about why a *global* sign flip was rejected.
+
+**Symptom.** In the Grid Room, moving CLOSER made the grid *shrink* (read as
+"zooming out" instead of being enveloped), and the rotational "look" was already
+active at ordinary forearm distance — letting the viewer rotate the z = 0 window
+plane and **see past the bezel-locked front rim**. Desired: translational-only,
+rim-locked motion during approach; rotational look only once *enveloped*
+(~10–15 cm from the camera).
+
+**Root cause — two consuming-layer issues, NOT frozen `camera_math.py`.**
+1. *Zoom direction.* `Launcher/app_engine.py` used `cz = BASE_Z·e^(+ZOOM_K·hz)`
+   for **every** world, so leaning IN *increased* cz → narrower telephoto frustum.
+   Correct for a single FOREGROUND object (Earth grows on approach — pinned by
+   `sim_viewing`/`sim_vertical`), but backwards for an ENVIRONMENT you enter: a
+   real shadow-box envelops you as the eye nears the glass (smaller cz → wider
+   frustum), which is the window model [[off-axis-projection]] already documents.
+2. *Rotation gate.* `om.proximity(hz)` used the frozen default window `[0.0, 0.8]`,
+   so rotation began the instant the viewer leaned past neutral, un-pinning the rim.
+
+**Why the fix is per-world, not global.** A global zoom flip would invert the
+Earth's deliberately-calibrated telephoto zoom AND break `sim_viewing` checks 1–2
+plus gut `sim_vertical`'s near-field "push the planet off-screen" exploration (a
+wide close-range frustum cannot pan a foreground object past half-FOV under the
+46° anti-nausea clamp). Verified live-headlessly that a global flip fails those
+guards; rejected with the user in favour of **enclosure-only** scope.
+
+**Fix.** Declarative `rendering.enveloping` flag (default **False** → object worlds
+byte-identical). `WorldRuntime.enveloping` property; `true` in
+`Worlds/grid_room/world.json` + `Worlds/gem/world.json`. In `app_engine.py`:
+`zoom_sign = -1.0 if world.enveloping else 1.0` (enclosure cz = `BASE_Z·e^(−ZOOM_K·hz)`,
+lean IN → cz 11.5→5.0, FOV 58°→104°), and enclosure rotation uses
+`om.proximity(hz, lo=0.7, hi=1.0)` (zero look until enveloped, smooth to full at
+hz=1.0). **`camera_math.py` is untouched** — the lo/hi are passed as call args.
+
+**Files.** `Launcher/app_engine.py`, `Worlds/world_runtime.py`,
+`Worlds/grid_room/world.json`, `Worlds/gem/world.json`,
+`Scripts/validation/sim_envelop.py` (new guard).
+
+**Validation.** New `sim_envelop.py` pins the enclosure invariants (window-correct
+zoom monotone; rim maps to the screen border at every approaching eye; look gated
+to envelopment + C¹; the per-world sign genuinely flips). **All 10 headless sims
+pass.** `sim_viewing` + `sim_vertical` are **byte-identical to before** (object
+path preserved → Earth/Watcher feel and their guards intact). Live GL confirmation
+in the Grid Room still needs a GUI session (standing renderer constraint).
+
+**Remaining risks / notes.** The enclosure path is new and not exercised by the
+Earth-modelled sims beyond `sim_envelop`; live "feel" tuning of `ROT_GATE_LO/HI`
+(0.7/1.0) and the envelopment depth may want a GUI pass. The Gem world is an
+enclosure too, so its floating gem now shrinks on lean-in (consistent with
+"entering the box"). See [[off-axis-projection]], [[grid-room]], [[constraints]].
 
 ---
 

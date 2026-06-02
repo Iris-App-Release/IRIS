@@ -1,8 +1,8 @@
 ---
 title: Off-Axis Projection (Camera Math)
 type: system
-related: [head-tracking, rendering-engine, headless-simulation, orbital-icons, constraints, design-decisions, system-interactions]
-last_updated: 2026-05-31
+related: [head-tracking, rendering-engine, headless-simulation, orbital-icons, constraints, design-decisions, system-interactions, viewing-models]
+last_updated: 2026-06-02
 sources: [Engine/camera_math.py, Scripts/validation/sim_offaxis.py, Scripts/validation/sim_viewing.py, Scripts/validation/sim_orbit.py]
 ---
 
@@ -49,9 +49,30 @@ The view is the smooth blend of three independent inputs from
    the screen edge appear to "stick" to real-world coordinates as you move.
    *Sense:* moving right reveals the **left** of the scene (window parallax).
 
-2. **Distance scaling → eye-to-glass distance** (head depth `hz`). Leaning in
-   shortens `cam_z`, which widens the frustum and makes the scene reveal grow —
-   the natural "proximity = more visible" cue.
+2. **Depth response → on-screen scale** (head depth `hz`). The *mechanism* is
+   per-world (chosen in [[engine-loop-and-daemon]]):
+   - **Object worlds** (default — Earth, The Watcher): **telephoto** via the
+     eye-to-glass distance, `cz = CAM_BASE_Z·e^(+ZOOM_K·hz)`. Leaning in lengthens
+     `cam_z`, narrowing the frustum so a single foreground body
+     telephoto-**magnifies** on approach (the calibrated feel pinned by
+     `sim_viewing` / `sim_vertical`), and it keeps the near-field "push the planet
+     off-screen" vertical exploration.
+   - **Enclosure worlds** (`rendering.enveloping = true` — the Grid Room, the Gem
+     box): a **forward dolly**. `cam_z` is held at `CAM_BASE_Z` so the **FOV is
+     constant** (58° at every distance — no lens zoom), and instead the whole scene
+     is translated toward the eye by `dolly` world units along −z (`DOLLY_GAIN`,
+     baked into the modelview). Leaning in moves the camera *into* the room: the
+     object of interest **grows** with honest perspective, the walls slide past,
+     and the front rim expands off the screen until the viewer is **enveloped**.
+     This is why the mechanism is per-world, not a single global sign: in a
+     *fixed-window* off-axis rig, moving the eye toward the glass mathematically
+     *shrinks* a foreground object (on-screen size ∝ `cz/(cz+10)`), so envelopment
+     and "move in = grow" cannot both come from the `cz` term — the enclosure case
+     gets its depth from a scene translation instead. Pinned by `sim_envelop`.
+
+   These two depth mechanisms are the **two viewing models** a world chooses
+   between via `rendering.enveloping`; see [[viewing-models]] for the full pattern
+   and a decision guide for authoring a new world.
 
 3. **Rotation → proximity-gated view pan** (head orientation `yaw`, `pitch`).
    A real observer explores a *far* scene by moving (translation, above) and a
@@ -59,7 +80,16 @@ The view is the smooth blend of three independent inputs from
    the viewer is**: weak far away, dominant up close, with a smoothstep blend so
    there is no perceptible mode switch. *Sense:* turning the head right reveals
    the **right** of the scene (panning a portal) — deliberately the opposite of
-   translation.
+   translation. Object worlds use the frozen gate window `proximity(hz)` =
+   `[ROT_PROX_LO, ROT_PROX_HI] = [0.0, 0.8]`. **Enclosure worlds (merged 2026-06-02)**
+   use the *same* early, wide band but split the weight into engagement × amplitude
+   (`prox = engage(hz)·amp(hz)`, engine `LOOK_*` constants passed as `proximity()`
+   args — `camera_math.py` is untouched): `engage = proximity(hz, [0.35, 1.0])` opens
+   early/wide like Earth, while `amp` caps the look amplitude to ~22 % until the
+   forward dolly carries the front rim off-screen (rim-clear ≈ hz 0.72, derived from
+   `DOLLY_GAIN`), then ramps to full. So enclosures get Earth's blended eye-looking
+   *and* keep their bezel-locked rim — the early look never shears a still-visible
+   grid edge. See [[viewing-models]] and [[what-makes-perspective-optimal]].
 
 ## Key constants
 
@@ -127,5 +157,5 @@ radius 4.2, tilt 63°, icon size 0.85, speed 0.22 rad/s) so the live render in
 - **Feeds:** [[rendering-engine]] (projection + modelview matrices each frame),
   [[orbital-icons]] (shared orbital geometry).
 - **Verified by:** [[headless-simulation]] (`sim_offaxis`, `sim_viewing`,
-  `sim_orbit`, `sim_vertical`).
+  `sim_orbit`, `sim_vertical`, and `sim_envelop` for the enclosure path).
 - **Orchestrated by:** [[engine-loop-and-daemon]].

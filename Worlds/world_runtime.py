@@ -124,3 +124,42 @@ class WorldRuntime:
     def clear_color(self) -> tuple[float, float, float]:
         c = self.rendering.get("clear_color", [0.0, 0.0, 0.012])
         return (float(c[0]), float(c[1]), float(c[2]))
+
+    # ── Grid Room / spatial-reference parameters (Earth-preserving defaults) ───
+    # Read only by the "room" primary_mesh and the opt-in window-frame anchor;
+    # every other world ignores them, so the defaults change nothing.
+    @property
+    def show_window_frame(self) -> bool:
+        """Opt-in faint frame on the glass (world z=0). Default OFF → shipped
+        worlds unchanged."""
+        return bool(self.rendering.get("show_window_frame", False))
+
+    @property
+    def enveloping(self) -> bool:
+        """Forward-dolly depth model for ENCLOSURE worlds (Grid Room, Gem box).
+        When True the engine holds the eye-to-glass distance at BASE_Z (FOV
+        constant — no lens zoom) and instead dollies the scene toward the eye along
+        −z as the viewer leans in, so the camera moves INTO the room: the object of
+        interest grows with honest perspective and the front rim slides off-screen
+        until enveloped. The rotational 'look' is MERGED toward the Earth feel: it
+        engages early and wide (blended with the dolly) but its amplitude is capped
+        while the front rim is still on screen, ramping to full only once the rim
+        clears — so the early look never shears a still-visible grid edge. Default
+        OFF → object worlds (Earth, The Watcher) keep telephoto zoom + the frozen
+        proximity gate, byte-identical. See [[off-axis-projection]],
+        [[what-makes-perspective-optimal]] and the per-world depth-response +
+        enclosure-look blocks in app_engine.py."""
+        return bool(self.rendering.get("enveloping", False))
+
+    @property
+    def grid_color(self) -> tuple[float, float, float]:
+        c = self.rendering.get("grid_color", [0.30, 0.72, 1.0])
+        return (float(c[0]), float(c[1]), float(c[2]))
+
+    @property
+    def grid_depth(self) -> float:
+        return float(self.rendering.get("grid_depth", 18.0))
+
+    @property
+    def grid_divisions(self) -> int:
+        return int(self.rendering.get("grid_divisions", 8))

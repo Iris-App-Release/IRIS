@@ -1,0 +1,26 @@
+{
+  "name": "Grid Room",
+  "description": "A wireframe shadow-box room. The monitor becomes a window into a receding holographic grid — pure spatial-reference parallax, the strongest fish-tank depth cue.",
+  "version": "1.0",
+  "environment": {
+    "primary_mesh": "room",
+    "secondary_elements": [],
+    "background": "void",
+    "lighting": {
+      "sun_direction": [0.0, 0.0, 1.0],
+      "ambient_intensity": 0.0
+    }
+  },
+  "rendering": {
+    "use_bloom": false,
+    "use_parallax": true,
+    "enveloping": true,
+    "rotation_speed": 0.0,
+    "show_icons": false,
+    "show_window_frame": true,
+    "grid_color": [0.30, 0.72, 1.0],
+    "grid_depth": 18.0,
+    "grid_divisions": 8,
+    "clear_color": [0.01, 0.012, 0.022]
+  }
+}

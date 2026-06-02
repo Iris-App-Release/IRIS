@@ -160,10 +160,6 @@ def _aa_round_rect(surf, rect, color, radius) -> None:
     surf.blit(pygame.transform.smoothscale(big, (w, h)), rect.topleft)
 
 
-def _glass_panel(surf, rect, radius, s=1.0) -> None:
-    _aa_round_rect(surf, rect, (255, 255, 255, 255), radius)
-
-
 def _glass_button(surf, rect, label, font, primary, hover_t, s=1.0) -> None:
     """Solid white pill; on hover it greys slightly and lifts with a soft shadow."""
     radius = int(_BTN_CORNER * s)
@@ -193,6 +189,29 @@ def _grey_container(surf, rect, s=1.0, radius=None) -> None:
     _aa_round_rect(surf, rect, GREY_CONTAINER, r)
 
 
+def _filled_rounded_poly(surf, pts, color, r) -> None:
+    """Filled polygon with rounded corners (Minkowski sum with a disc of radius
+    r), supersampled + smoothscaled for clean anti-aliased edges. Used for the
+    nav-arrow triangles so their corners are softened rather than razor-sharp."""
+    ss = _AA_SS
+    xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
+    pad = r + 2
+    minx, miny = min(xs) - pad, min(ys) - pad
+    w = int(max(xs) - min(xs) + pad * 2)
+    h = int(max(ys) - min(ys) + pad * 2)
+    if w <= 0 or h <= 0:
+        return
+    big = pygame.Surface((w * ss, h * ss), pygame.SRCALPHA)
+    sp = [((p[0] - minx) * ss, (p[1] - miny) * ss) for p in pts]
+    rr = max(1, int(r * ss))
+    pygame.draw.polygon(big, color, sp)
+    for a, b in zip(sp, sp[1:] + sp[:1]):
+        pygame.draw.line(big, color, a, b, rr * 2)
+    for p in sp:
+        pygame.draw.circle(big, color, (int(p[0]), int(p[1])), rr)
+    surf.blit(pygame.transform.smoothscale(big, (w, h)), (minx, miny))
+
+
 def _nav_arrow(surf, rect, direction, hover_t, s=1.0) -> None:
     """Grey rounded nav arrow (◀ / ▶). Instant, subtle drop shadow on hover."""
     radius = int(_BTN_CORNER * s)
@@ -202,7 +221,7 @@ def _nav_arrow(surf, rect, direction, hover_t, s=1.0) -> None:
             _aa_round_rect(surf, rect.inflate(g, g).move(0, int(2 * s)),
                            (0, 0, 0, int(a * hover_t)), radius + g // 2)
     _aa_round_rect(surf, rect, ARROW_FILL, radius)
-    # Chevron glyph centred in the rect.
+    # Triangle glyph centred in the rect, with slightly rounded corners.
     cx, cy = rect.center
     aw = int(rect.w * 0.18)
     ah = int(rect.h * 0.24)
@@ -210,7 +229,7 @@ def _nav_arrow(surf, rect, direction, hover_t, s=1.0) -> None:
         pts = [(cx + aw, cy - ah), (cx - aw, cy), (cx + aw, cy + ah)]
     else:               # right ▶
         pts = [(cx - aw, cy - ah), (cx + aw, cy), (cx - aw, cy + ah)]
-    pygame.draw.polygon(surf, ARROW_GLYPH, pts)
+    _filled_rounded_poly(surf, pts, ARROW_GLYPH, r=max(2, int(3 * s)))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -367,14 +386,17 @@ class DemoOverlay:
 
     def _primary(self) -> tuple[str, str]:
         """The single bottom-centred action. Owns one slot:
-          • before the camera is granted  → "Enable Camera"
+          • before the camera is granted  → "Enable Camera for Desktop Mode"
           • while it is settling          → "Starting camera…" (no-op)
           • once granted                  → the Desktop Mode control
-        Identical positioning/sizing/styling across the swap."""
+        Identical positioning/sizing/styling across the swap. The enable-camera
+        label spells out that the camera is the path to Desktop Mode, and it is
+        what shows on first open AND whenever camera access is disabled (the
+        click re-enables access, see _click)."""
         if not self._camera_ready():
             if self.live and not self.camera_denied:
                 return ("Starting camera…", "none")     # in-flight, immediate feedback
-            return (STRINGS["demo_ui"]["buttons"]["enable_camera"], "enable_camera")
+            return ("Enable Camera for Desktop Mode", "enable_camera")
         # Camera granted → Desktop Mode controls.
         if self.daemon_running and not self.desktop_paused:
             return ("Disable Desktop Mode", "disable_desktop")
@@ -438,6 +460,12 @@ class DemoOverlay:
         self._save_pref("camera_enabled", self.camera_enabled)
         if not enabled:
             self.live = False                  # back to floating preview (idle)
+            # Camera is off → tracking is no longer active, so _camera_ready()
+            # must drop back to False (unless a desktop daemon is running). Without
+            # this the bottom action wrongly kept reading "Enable Desktop Mode"
+            # after the camera was disabled again.
+            self.tracking_active = False
+            self.camera_denied   = False
         self._toast_msg("Camera access on" if enabled else "Camera access off", 2.2)
 
     def on_desktop_enabled(self) -> None:
@@ -499,14 +527,16 @@ class DemoOverlay:
             # render time from the active world's display name).
             self._worldname_cy = self._tabbar.bottom + int(28 * S)
 
-            # World navigation arrows — one at each screen edge, vertical centre.
-            # They switch worlds instantly (no carousel/animation) and stay until
-            # Desktop Mode is active (the whole HUD hides then).
+            # World navigation arrows — flanking the scene, pulled in from the
+            # edges toward the centre. They switch worlds instantly (no carousel)
+            # and stay until Desktop Mode is active (the whole HUD hides then).
             arrow = int(56 * S)
+            edge_inset = int(120 * S)
             ay = h // 2 - arrow // 2
-            self._buttons["world_prev"] = pygame.Rect(int(40 * S), ay, arrow, arrow)
+            self._buttons["world_prev"] = pygame.Rect(edge_inset, ay, arrow, arrow)
             self._buttons["world_next"] = pygame.Rect(
-                w - int(40 * S) - arrow, ay, arrow, arrow)
+                w - edge_inset - arrow, ay, arrow, arrow)
+            self._content_top = None
 
             # Bottom-centred action group: grey container holding a status line +
             # the single large action pill (Enable Camera → Desktop Mode).
@@ -524,7 +554,6 @@ class DemoOverlay:
             self._buttons["primary"] = pygame.Rect(
                 group_x + gpad, group_y + gpad + status_h + inner_gap,
                 primary_w, primary_h)
-            self._content_panel = None
 
         # ── Settings / Community tabs ──────────────────────────────────────────
         else:
@@ -532,18 +561,16 @@ class DemoOverlay:
             self._action_group = None
             self._status_rect  = None
 
-            # Full-width content page below the tab bar
-            page_top = self._tabbar.bottom + int(16 * S)
-            page_h   = h - page_top - int(40 * S)
-            page_w   = w - int(80 * S)
-            self._content_panel = pygame.Rect(int(40 * S), page_top, page_w, page_h)
+            # Full-bleed BLANK WHITE page — no inset card, no dark frame. The tab
+            # bar floats on top; content is positioned below it (_content_top).
+            self._content_top = self._tabbar.bottom + int(40 * S)
 
             if self._active_tab == "settings":
-                cam_btn_w = min(int(300 * S), page_w - pad * 2)
+                cam_btn_w = int(320 * S)
                 cam_btn_h = int(52 * S)
                 self._buttons["camera_toggle"] = pygame.Rect(
                     w // 2 - cam_btn_w // 2,
-                    page_top + int(80 * S),
+                    self._content_top + int(60 * S),
                     cam_btn_w, cam_btn_h)
 
     def _hit(self, pos) -> str | None:
@@ -578,6 +605,12 @@ class DemoOverlay:
         if key == "primary":
             _label, action = self._primary()
             if action == "enable_camera":
+                # If camera access was turned off in Settings, the engine ignores
+                # tracking_requested while the camera_off flag exists — so clicking
+                # "Enable Camera for Desktop Mode" here would be a dead button.
+                # Re-enable access first so the click actually starts the camera.
+                if not self.camera_enabled:
+                    self._set_camera_enabled(True)
                 self.tracking_requested = True
                 self.live = True
                 self.tracking_active = False
@@ -672,22 +705,10 @@ class DemoOverlay:
 
         ca = max(0.0, min(1.0, self._ctrl_alpha))
         cx = self.w // 2
+        # Tab-content draws on `layer` (idle-faded on Worlds). The tab bar is
+        # drawn LATER, directly on `surf`, so it is never idle-faded and its hover
+        # feedback stays instant/crisp (the prior lag was the fade easing in).
         layer = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
-
-        # ── Tab bar (all tabs) — dark grey container, white active pill ───────
-        _aa_round_rect(layer, self._tabbar, GREY_CONTAINER, int(_TABBAR_CORNER * S))
-        for key, text in (("tab:worlds", "Worlds"),
-                          ("tab:community", "Community"),
-                          ("tab:settings", "Settings")):
-            r = self._buttons[key]
-            is_active = (key == f"tab:{self._active_tab}")
-            if is_active:
-                _aa_round_rect(layer, r, BTN_FILL_REST, int(_BTN_CORNER * S))
-                _text_shadow(layer, text, self.fnt_small, BTN_TEXT, r.center, S)
-            else:
-                if self._hover_anim.get(key, 0.0) > 0.5:   # instant hover highlight
-                    _aa_round_rect(layer, r, (255, 255, 255, 46), int(_BTN_CORNER * S))
-                _text_shadow(layer, text, self.fnt_small, GREY_TEXT, r.center, S)
 
         # ── Worlds tab — nav arrows, world-name pill, bottom action group ─────
         if self._active_tab == "worlds":
@@ -718,37 +739,46 @@ class DemoOverlay:
                           primary=True,
                           hover_t=self._hover_anim.get("primary", 0.0), s=S)
 
-        # ── Settings tab — white card + camera-access toggle ──────────────────
+        # ── Settings tab — blank white page + camera-access toggle ────────────
         elif self._active_tab == "settings":
-            if self._content_panel:
-                _glass_panel(layer, self._content_panel,
-                             radius=int(_PANEL_CORNER * S), s=S)
-                _text_shadow(layer, "Settings", self.fnt_btn, BTN_TEXT,
-                             (self._content_panel.centerx,
-                              self._content_panel.y + int(38 * S)), S)
+            layer.fill(BTN_FILL_REST)                       # full-bleed blank white
+            _text_shadow(layer, "Settings", self.fnt_btn, BTN_TEXT,
+                         (cx, self._content_top), S)
             if "camera_toggle" in self._buttons:
                 r = self._buttons["camera_toggle"]
-                # Grey container behind the pill so it reads on the white card.
+                # Grey container behind the pill so it reads on the white page.
                 _grey_container(layer, r.inflate(int(12 * S), int(12 * S)), s=S)
                 cam_label = ("Camera Access  ·  On" if self.camera_enabled
                              else "Camera Access  ·  Off")
                 _glass_button(layer, r, cam_label, self.fnt_btn, primary=False,
                               hover_t=self._hover_anim.get("camera_toggle", 0.0), s=S)
 
-        # ── Community tab — white card, coming soon ───────────────────────────
+        # ── Community tab — blank white page, coming soon ─────────────────────
         elif self._active_tab == "community":
-            if self._content_panel:
-                _glass_panel(layer, self._content_panel,
-                             radius=int(_PANEL_CORNER * S), s=S)
-                _text_shadow(layer, "Community", self.fnt_btn, BTN_TEXT,
-                             (self._content_panel.centerx,
-                              self._content_panel.y + int(38 * S)), S)
-                _text_shadow(layer, "Coming Soon", self.fnt_hint, GREY_TEXT_DIM,
-                             self._content_panel.center, S)
+            layer.fill(BTN_FILL_REST)                       # full-bleed blank white
+            _text_shadow(layer, "Community", self.fnt_btn, BTN_TEXT,
+                         (cx, self._content_top), S)
+            _text_shadow(layer, "Coming Soon", self.fnt_hint, GREY_TEXT_DIM,
+                         (cx, self.h // 2), S)
 
         if ca < 0.999:
             layer.fill((255, 255, 255, int(255 * ca)), special_flags=pygame.BLEND_RGBA_MULT)
         surf.blit(layer, (0, 0))
+
+        # ── Tab bar — drawn last, on `surf`, so it is NEVER idle-faded and its
+        # hover feedback is instant/crisp (dark grey container, white active pill).
+        _aa_round_rect(surf, self._tabbar, GREY_CONTAINER, int(_TABBAR_CORNER * S))
+        for key, text in (("tab:worlds", "Worlds"),
+                          ("tab:community", "Community"),
+                          ("tab:settings", "Settings")):
+            r = self._buttons[key]
+            if key == f"tab:{self._active_tab}":
+                _aa_round_rect(surf, r, BTN_FILL_REST, int(_BTN_CORNER * S))
+                _text_shadow(surf, text, self.fnt_small, BTN_TEXT, r.center, S)
+            else:
+                if self._hover_anim.get(key, 0.0) > 0.5:   # instant hover highlight
+                    _aa_round_rect(surf, r, (255, 255, 255, 72), int(_BTN_CORNER * S))
+                _text_shadow(surf, text, self.fnt_small, GREY_TEXT, r.center, S)
 
         # Toast (does not fade with idle). On the Worlds tab it floats just above
         # the bottom action group; elsewhere it sits near the bottom edge — never

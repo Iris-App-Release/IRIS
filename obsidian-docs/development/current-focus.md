@@ -1,8 +1,8 @@
 ---
 title: Current Focus
 type: reference
-related: [known_issues, head-tracking, engine-loop-and-daemon, constraints, the-watcher, the-gem, productification, version-control]
-last_updated: 2026-06-01
+related: [known_issues, head-tracking, engine-loop-and-daemon, constraints, the-watcher, the-gem, productification, version-control, menu-bar-ui, grid-api-customization]
+last_updated: 2026-06-02
 sources: [Tracking/face_tracker.py, Launcher/app_engine.py, Engine/renderer.py, Engine/bloom_postfx.py, Scripts/tools/gen_eye_textures.py]
 ---
 
@@ -10,6 +10,83 @@ sources: [Tracking/face_tracker.py, Launcher/app_engine.py, Engine/renderer.py, 
 
 What's actively being worked on right now. Keep this short — move durable
 conclusions into the relevant system page and bug records into [[known_issues]].
+
+## Grid + sphere merge — enclosures get Earth's blended look + keep their anchor — DONE (2026-06-02)
+
+Decision: **take the good parts of both worlds.** The [[earth]] (sphere/object) world
+has the better *eye-looking* — rotation and translation coexist across a wide
+proximity band, so it feels like moving around the scene. The enclosure worlds
+([[grid-room]], [[the-gem]]) have the better *screen anchor* — the bezel-locked front
+rim. Previously enclosures deferred all rotation until nearly enveloped
+(`proximity(hz, [0.75, 1.0])`), giving a sequential "first move in, then look around"
+feel. The merge gives them Earth's early/wide look **without** losing the anchor.
+
+- **Mechanism (consuming layer only).** The single enclosure look weight is split
+  into `prox = engage(hz)·amp(hz)`: `engage = proximity(hz, [LOOK_ENGAGE_LO,
+  LOOK_ENGAGE_HI] = [0.35, 1.0])` opens early/wide like Earth; `amp = LOOK_PRELOOK_AMP
+  + (1−LOOK_PRELOOK_AMP)·proximity(hz, [LOOK_AMP_LO, LOOK_AMP_HI])` caps the look
+  amplitude to **0.22** while the rim is on screen and ramps to full as the rim clears
+  the near plane. `LOOK_AMP_LO` is *derived* from `DOLLY_GAIN` (≈ hz 0.72) so cap
+  release always tracks the actual rim clear. Both factors are smoothstep ⇒ monotone
+  + C¹.
+- **Why it's shear-free.** The bezel-locked rim leaves the *screen* the instant the
+  dolly starts (hz ≈ 0.02, verified) — long before the look engages at 0.35 — so it
+  never shears on its way out; and the amplitude cap keeps the receding interior grid
+  gentle during partial envelopment. Full-strength look only once enveloped. This is
+  the **amplitude-gated** path proposed in [[what-makes-perspective-optimal]].
+- **Object worlds untouched** — they keep the frozen `proximity(hz)` gate ([0.0,
+  0.8]) and never amplitude-cap; `sim_viewing` / `sim_vertical` / `sim_offaxis` /
+  `sim_orbit` are byte-identical. **`camera_math.py` untouched** (all lo/hi are
+  `proximity()` args). `sim_envelop.py` rewritten to pin the merged invariants
+  (early/wide engage; amplitude capped until rim clear; full + significant once
+  enveloped; monotone + C¹; object path untouched). **All 10 sims pass.**
+- **Files.** `Launcher/app_engine.py` (LOOK_* block + per-world prox),
+  `Worlds/world_runtime.py` (`enveloping` docstring), `Scripts/validation/sim_envelop.py`.
+- **Next:** live GUI pass to calibrate `LOOK_ENGAGE_LO` / `LOOK_PRELOOK_AMP` against
+  feel (geometry + invariants are settled; the perception threshold needs a human).
+
+## Enclosure-world viewing model — forward dolly (lean in = move INTO the room) — DONE (2026-06-02)
+
+The enclosure worlds (Grid Room, Gem) now use a **forward dolly** for depth. An
+earlier same-day attempt flipped the `cz` sign so leaning in widened the frustum —
+geometrically the correct fixed-window result, but it made the grid stretch/deepen
+and the gem *shrink* on approach (the opposite of "move in = zoom in"), and the
+~15 cm look sheared the still-visible grid. Replaced with the dolly model (per-world
+`rendering.enveloping`, default OFF → Earth/Watcher byte-identical):
+
+- **Enclosure worlds** hold `cz = BASE_Z` (FOV constant at 58° — no lens zoom) and
+  translate the scene toward the eye by `dolly = clamp(DOLLY_GAIN·hz)` along −z
+  (baked into the modelview). Leaning in moves the camera INTO the room: the gem
+  **grows** with honest perspective (≈2.5× at full lean), the walls slide past, and
+  the front rim expands off-screen until enveloped. *(The look-gate was first
+  tightened to `proximity(hz, [0.88→0.75, 1.0])`; it has since been **superseded by
+  the grid + sphere merge above** — early/wide engage + amplitude cap. See that
+  section.)*
+- **Object worlds** unchanged — `dolly ≡ 0`, telephoto `cz` preserved (max |Δcz| = 0).
+- **`camera_math.py` untouched** (dolly is a modelview translate; gate lo/hi are
+  args). Rewrote guard `Scripts/validation/sim_envelop.py` (constant FOV, monotone
+  dolly, gem GROWS on lean-in, rim out of sight when enveloped, look gated + C¹,
+  object path untouched); **all 10 sims pass**. Full record in [[known_issues]] /
+  [[grid-room]] / [[the-gem]].
+- **Next:** live GUI pass to tune `DOLLY_GAIN` and the merged `LOOK_*` look knobs.
+
+## Design concepts: Menu bar UI + Grid API (incoming, 2026-06-02)
+
+Two new architectural patterns proposed for next phase:
+
+1. **[[menu-bar-ui]]** — A lightweight, always-visible macOS menu bar icon providing
+   quick toggles (Camera, Exit Desktop Mode) and access to full settings. Solves the
+   "trapped in wallpaper" UX problem. Leverages existing file-based IPC (`~/.iris/*`
+   flags). Critical for [[productification]] polished UX milestone.
+
+2. **[[grid-api-customization]]** — The `grid_room` world acts as a spatial
+   coordinate system (grid cells [x, y, z]) for safe, user-friendly asset placement.
+   Locks the frozen physics/camera; allows only graphical/asset modification. Enables
+   Claude-assisted world customization and procedural generation. Unlocks the
+   [[productification]] community world-building and subscription roadmap.
+
+Both are design-decision-stage (documented, not yet implemented). Linked to productification
+path for alignment.
 
 ## Demo HUD reorganization — first draft DONE (2026-06-01)
 

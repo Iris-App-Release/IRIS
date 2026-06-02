@@ -10,7 +10,7 @@ related:
   - asset-pipeline
   - design-decisions
   - system-interactions
-last_updated: 2026-06-01
+last_updated: 2026-06-02
 sources:
   - Engine/camera_math.py
   - Tracking/face_tracker.py
@@ -41,6 +41,27 @@ by [[headless-simulation]].
   (anti-nausea); proximity gate fades rotation in over `hz ∈ [0.0, 0.8]`; a
   proximity-scaled `LOOK_PITCH_OFFSET = 0.25` re-zeroes the resting gaze onto the
   planet (the webcam sits above the screen). See [[engine-loop-and-daemon]].
+- **Per-world depth response (`rendering.enveloping`, default false).** Object
+  worlds (Earth, The Watcher) use distance scaling `cz = CAM_BASE_Z·e^(+ZOOM_K·hz)`
+  (lean in → telephoto magnify) and the rotation gate above. **Enclosure worlds**
+  (Grid Room, Gem) instead hold `cz = CAM_BASE_Z` (FOV constant at 58° — no lens
+  zoom) and apply a **forward dolly**: the scene is translated toward the eye by
+  `dolly = clamp(DOLLY_GAIN·hz)` world units along −z (baked into the modelview),
+  so leaning in moves the camera INTO the room — the foreground object GROWS with
+  honest perspective and the front rim expands off-screen until enveloped. The
+  rotational look is **merged toward the Earth feel (2026-06-02)**: `prox =
+  engage(hz)·amp(hz)`, where `engage = proximity(hz, [LOOK_ENGAGE_LO, LOOK_ENGAGE_HI]
+  = [0.35, 1.0])` opens early/wide like the object gate, and `amp` caps the look
+  amplitude to `LOOK_PRELOOK_AMP = 0.22` until the dolly clears the rim (≈ hz 0.72,
+  derived from `DOLLY_GAIN`), then ramps to full. So enclosures gain Earth's blended
+  eye-looking while keeping their bezel-locked rim (the early look can't shear a
+  still-visible grid edge). The two depth mechanisms are per-world, not a global
+  sign: in a fixed-window off-axis rig moving the eye toward the glass *shrinks* a
+  foreground object (size ∝ `cz/(cz+10)`), so envelopment and "move in = grow" can
+  only coexist via a scene translation. `camera_math.py` is untouched (the dolly is a
+  modelview translate; all gate lo/hi are `proximity()` args). Pinned by
+  `sim_envelop.py`. See [[off-axis-projection]] / [[viewing-models]] /
+  [[what-makes-perspective-optimal]] and the merge entry in [[log]] / [[known_issues]].
 
 ## Latency & frame rate
 

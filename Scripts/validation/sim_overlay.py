@@ -82,6 +82,7 @@ def main() -> int:
     ov_mod.PREFS_FILE = tmp / "preferences.json"
     ov_mod.DAEMON_PID_FILE = tmp / "daemon.pid"
     ov_mod.TRACKING_OFF_FLAG = tmp / "parallax_off"
+    ov_mod.CAMERA_OFF_FLAG = tmp / "camera_off"   # keep camera-toggle writes off ~/.iris
     from UI.demo_overlay import DemoOverlay
 
     W, H, S = 1180, 760, 2.0
@@ -90,7 +91,8 @@ def main() -> int:
     print("Floating default:")
     o = DemoOverlay(W, H, scale=S, daemon_running=False, desktop_paused=False)
     check("opens NOT live (floating preview)", o.live is False)
-    check("primary CTA is 'Enable Camera'", o._primary() == ("Enable Camera", "enable_camera"),
+    check("primary CTA is 'Enable Camera for Desktop Mode'",
+          o._primary() == ("Enable Camera for Desktop Mode", "enable_camera"),
           repr(o._primary()))
     check("status reads 'Floating preview'", o._status_text() == "Floating preview")
 
@@ -192,6 +194,25 @@ def main() -> int:
     check("returning to Worlds restores preview_active True",
           o4.preview_active is True)
     check("Worlds restores world-nav arrows", "world_prev" in o4._buttons)
+
+    # ── 9. Camera-disable routing regression ───────────────────────────────────
+    # Bug: after the camera was granted then disabled again, the bottom action
+    # wrongly kept reading "Enable Desktop Mode". Disabling must revert it to the
+    # enable-camera label (since _camera_ready drops to False with no daemon).
+    print("\nCamera-disable routing:")
+    o5 = DemoOverlay(W, H, scale=S, daemon_running=False, desktop_paused=False)
+    o5._click("primary"); o5.notify_tracking_active()       # enable + grant
+    check("after grant → 'Enable Desktop Mode'",
+          o5._primary() == ("Enable Desktop Mode", "enable_desktop"), repr(o5._primary()))
+    o5._set_camera_enabled(False)                            # disable camera access
+    check("after camera disabled → 'Enable Camera for Desktop Mode'",
+          o5._primary() == ("Enable Camera for Desktop Mode", "enable_camera"),
+          repr(o5._primary()))
+    check("camera-disabled clears tracking_active", o5.tracking_active is False)
+    # Clicking it re-enables access (otherwise the engine ignores the request).
+    o5._click("primary")
+    check("clicking enable re-enables camera access", o5.camera_enabled is True)
+    check("clicking enable raises tracking_requested", o5.tracking_requested is True)
 
     print()
     if _fail:

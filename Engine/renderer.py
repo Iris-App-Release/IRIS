@@ -336,24 +336,20 @@ class Gem:
     _TILT_MAX_DEG  = 25.0   # peak tilt from vertical — oscillates ±this
     _TILT_SPEED    = 0.38   # oscillation rate (rad/s); period ≈ 16.5 s
 
-    # Shadow disk
-    _SHADOW_Y     = -3.30
+    # Grounding shadow disk — drawn on the box floor, directly beneath the gem.
     _SHADOW_R     =  3.50
     _SHADOW_ALPHA =  0.28
 
-    # Floor plane
-    _FLOOR_HALF  = 600.0  # half-extent in world units (X and Z)
-    # The floor is a FLAT, unlit plane textured with a GL_REPEAT checker, so the
-    # subdivision adds nothing — perspective-correct UV interpolation gives the
-    # same horizon convergence with 2 triangles as with thousands. Dropped from
-    # 60 (= 21,600 verts re-streamed every frame through the slow client-side
-    # array path) to 1 (= 6 verts). Pure per-frame win, pixel-identical result.
-    _FLOOR_DIVS  = 1      # grid subdivisions per axis (flat plane → 1 is exact)
-    # World units per full texture repeat. The generated checker texture is 8
-    # checks across, so each check = _FLOOR_TILE / 8 world units. Raised 1.0 → 10.0
-    # so the checks are ~10× larger (they read far too small at 1.0).
-    _FLOOR_TILE  = 10.0   # one texture repeat = 10 world units (≈1.25u per check)
-    _FLOOR_Y     = -3.30  # coplanar with shadow disk
+    # Checkered enclosure box. The gem floats inside a 5-face room (floor, ceiling,
+    # back wall, left/right walls) that shares the Grid Room's dimensions — the live
+    # aperture half-extents plus grid_depth / grid_divisions. Each face is mapped so
+    # that exactly ONE checker square lands on ONE grid cell (the checker IS the
+    # grid): the 8×8 checker texture is laid down with UV span = divisions /
+    # _BOX_TEX_CHECKS, giving `divisions` checks across the `divisions` cells of
+    # every face regardless of its aspect. Drawn in WORLD space (front rim on the
+    # glass at z = 0) like GridRoom, so the gem at the z = -10 anchor floats inside.
+    _BOX_TEX_CHECKS = 8
+    _GEM_ANCHOR_Z   = -10.0   # world z of the gem (matches OBJECTS["earth"])
 
     def __init__(self):
         v, n = make_gem()
@@ -364,16 +360,19 @@ class Gem:
         self._spin_y     = 0.0
         self._tilt_phase = 0.0
         self._shadow_v, self._shadow_c = self._build_shadow()
-        self._floor_tex            = self._build_floor_texture()
-        self._floor_v, self._floor_uv = self._build_floor_mesh()
+        self._checker_tex = self._build_checker_texture(checks=self._BOX_TEX_CHECKS)
+        # Enclosure box mesh — (re)built and cached when the aperture/grid changes.
+        self._box_key = None
+        self._box_v   = None
+        self._box_uv  = None
 
-    # ── Floor ─────────────────────────────────────────────────────────────────
+    # ── Checkered enclosure box ─────────────────────────────────────────────────
 
-    def _build_floor_texture(self, size: int = 512, checks: int = 8) -> int:
+    def _build_checker_texture(self, size: int = 512, checks: int = 8) -> int:
         """
         Procedurally generate a pink/white checkerboard GL texture.
-        Each pair of checks maps to one tile period; GL_REPEAT tiles it
-        across the floor.  Returns the texture ID.
+        `checks` squares per axis; GL_REPEAT tiles it seamlessly across each
+        box face.  Returns the texture ID.
         """
         px    = size // checks
         white = np.array([255, 255, 255], dtype=np.uint8)
@@ -396,63 +395,91 @@ class Gem:
         glBindTexture(GL_TEXTURE_2D, 0)
         return tid
 
-    def _build_floor_mesh(self):
+    def _build_box_mesh(self, half_w, half_h, depth, divisions):
         """
-        Subdivided XZ plane at _FLOOR_Y.  UVs are world-space
-        (x / tile, z / tile) so each tile = one checker square.
-        OpenGL's own perspective projection gives the natural
-        one-point-perspective convergence of grid lines to the horizon.
+        Five interior faces (floor, ceiling, back wall, left/right walls) of the
+        enclosure box, as textured quads in WORLD space — front rim on the glass
+        at z = 0, back wall at z = -depth, floor/ceiling at y = ∓half_h, side walls
+        at x = ±half_w.  Every face spans `divisions` grid cells per edge, so each
+        face's UVs run 0..(divisions / _BOX_TEX_CHECKS): the 8×8 checker lays down
+        exactly `divisions` checks across `divisions` cells → one check per grid
+        cell, with checks stretched to match each face's (possibly non-square) cell.
         """
-        H    = self._FLOOR_HALF
-        D    = self._FLOOR_DIVS
-        Y    = self._FLOOR_Y
-        tile = self._FLOOR_TILE
-        xs   = np.linspace(-H, H, D + 1, dtype=np.float32)
-        zs   = np.linspace(-H, H, D + 1, dtype=np.float32)
-
+        s  = max(1, int(divisions)) / float(self._BOX_TEX_CHECKS)   # UV span per edge
+        hw, hh, d = float(half_w), float(half_h), float(depth)
         verts, uvs = [], []
-        for i in range(D):
-            for j in range(D):
-                for cx, cz in [
-                    (xs[j],   zs[i]),   (xs[j+1], zs[i]),   (xs[j+1], zs[i+1]),
-                    (xs[j],   zs[i]),   (xs[j+1], zs[i+1]), (xs[j],   zs[i+1]),
-                ]:
-                    verts.append((cx, Y, cz))
-                    uvs.append((cx / tile, cz / tile))
+
+        def quad(p0, p1, p2, p3):
+            # Two triangles; p0=uv(0,0), p1=uv(s,0), p2=uv(s,s), p3=uv(0,s).
+            verts.extend([p0, p1, p2, p0, p2, p3])
+            uvs.extend([(0.0, 0.0), (s, 0.0), (s, s),
+                        (0.0, 0.0), (s, s), (0.0, s)])
+
+        # Floor (y = -hh):  x ∈ [-hw, hw], z ∈ [0, -d]
+        quad((-hw, -hh, 0.0), ( hw, -hh, 0.0), ( hw, -hh, -d), (-hw, -hh, -d))
+        # Ceiling (y = +hh)
+        quad((-hw,  hh, 0.0), ( hw,  hh, 0.0), ( hw,  hh, -d), (-hw,  hh, -d))
+        # Back wall (z = -d):  x ∈ [-hw, hw], y ∈ [-hh, hh]
+        quad((-hw, -hh, -d), ( hw, -hh, -d), ( hw,  hh, -d), (-hw,  hh, -d))
+        # Left wall (x = -hw):  z ∈ [0, -d], y ∈ [-hh, hh]
+        quad((-hw, -hh, 0.0), (-hw, -hh, -d), (-hw,  hh, -d), (-hw,  hh, 0.0))
+        # Right wall (x = +hw)
+        quad(( hw, -hh, 0.0), ( hw, -hh, -d), ( hw,  hh, -d), ( hw,  hh, 0.0))
 
         return (np.array(verts, dtype=np.float32),
                 np.array(uvs,   dtype=np.float32))
 
-    def _draw_floor(self) -> None:
-        """Draw the textured checkerboard floor (fixed-function pipeline)."""
+    def draw_box(self, half_w, half_h, depth, divisions) -> None:
+        """Draw the checkered enclosure box + grounding shadow in WORLD space.
+
+        Called BEFORE the Earth-anchor translate (the box is an environment, like
+        GridRoom), so the gem drawn afterwards floats inside it."""
+        key = (round(half_w, 3), round(half_h, 3),
+               round(depth, 3), int(divisions))
+        if key != self._box_key:
+            self._box_v, self._box_uv = self._build_box_mesh(
+                half_w, half_h, depth, divisions)
+            self._box_key = key
+
+        # Faces: flat, unlit, textured checker (fixed-function). Cull off so the
+        # interior faces are visible regardless of winding.
         glUseProgram(0)
         glEnable(GL_DEPTH_TEST)
+        glDepthMask(GL_TRUE)
         glDisable(GL_BLEND)
+        glDisable(GL_CULL_FACE)
         glEnable(GL_TEXTURE_2D)
-        glBindTexture(GL_TEXTURE_2D, self._floor_tex)
+        glBindTexture(GL_TEXTURE_2D, self._checker_tex)
         glColor3f(1.0, 1.0, 1.0)   # no colour tint
 
         glEnableClientState(GL_VERTEX_ARRAY)
         glEnableClientState(GL_TEXTURE_COORD_ARRAY)
-        glVertexPointer(3, GL_FLOAT, 0, self._floor_v)
-        glTexCoordPointer(2, GL_FLOAT, 0, self._floor_uv)
-        glDrawArrays(GL_TRIANGLES, 0, len(self._floor_v))
+        glVertexPointer(3, GL_FLOAT, 0, self._box_v)
+        glTexCoordPointer(2, GL_FLOAT, 0, self._box_uv)
+        glDrawArrays(GL_TRIANGLES, 0, len(self._box_v))
         glDisableClientState(GL_TEXTURE_COORD_ARRAY)
         glDisableClientState(GL_VERTEX_ARRAY)
 
         glDisable(GL_TEXTURE_2D)
         glBindTexture(GL_TEXTURE_2D, 0)
 
+        # Soft grounding shadow on the checker floor, beneath the gem anchor.
+        glPushMatrix()
+        glTranslatef(0.0, -float(half_h) + 0.02, self._GEM_ANCHOR_Z)
+        self._draw_shadow()
+        glPopMatrix()
+
     # ── Shadow disk ───────────────────────────────────────────────────────────
 
     def _build_shadow(self, n_pts: int = 48):
-        """Flat triangle-fan disk at _SHADOW_Y with centre-to-edge alpha fade."""
-        verts  = [(0.0, self._SHADOW_Y, 0.0)]
+        """Flat triangle-fan disk in the y = 0 plane with centre-to-edge alpha
+        fade. Positioned onto the box floor by draw_box's translate."""
+        verts  = [(0.0, 0.0, 0.0)]
         colors = [(0.0, 0.0, 0.0, self._SHADOW_ALPHA)]
         for i in range(n_pts + 1):
             a = 2.0 * math.pi * i / n_pts
             verts.append((self._SHADOW_R * math.cos(a),
-                          self._SHADOW_Y,
+                          0.0,
                           self._SHADOW_R * math.sin(a)))
             colors.append((0.0, 0.0, 0.0, 0.0))
         return (np.array(verts, dtype=np.float32),
@@ -484,12 +511,8 @@ class Gem:
         self._tilt_phase += self._TILT_SPEED * dt
 
     def draw(self, sun_eye, fill_eye, time_s: float):
-        # 1. Floor — drawn first so depth buffer is correct.
-        self._draw_floor()
-        # 2. Shadow soft disk — alpha-blended over the floor.
-        self._draw_shadow()
-
-        # 3. Gem — rotated in model space, unaffected by floor/shadow transforms.
+        # Gem mesh only — the checkered enclosure box and the grounding shadow are
+        # drawn by draw_box() in WORLD space, before the anchor translate.
         tilt = self._TILT_MAX_DEG * math.sin(self._tilt_phase)
         glPushMatrix()
         glRotatef(self._spin_y, 0.0, 1.0, 0.0)
@@ -1088,3 +1111,156 @@ class Eye:
         self.mesh.draw()
         glUseProgram(0)
         glPopMatrix()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Grid Room — wireframe "shadow box" spatial-reference environment
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# A holographic wireframe room whose FRONT RIM is the window aperture at world
+# z = 0 (the glass): under the off-axis frustum that rim maps exactly to the
+# screen border (sim_offaxis check 6), so the four walls, floor and ceiling
+# recede BEHIND the monitor like a real shadow box. Dense, regular grid lines
+# give the strong, multi-depth MOTION-PARALLAX cue a single floating body cannot
+# — the dominant depth signal for a head-coupled display — and the rigid box
+# lets the visual system read small tracking wobble as "I moved" rather than
+# "it jittered". The receding side-wall lines converge to a vanishing point
+# (one-point perspective), which is exactly the depth scaffold the illusion
+# wants.
+#
+# Pure fixed-function GL_LINES — NO shader, so the frozen shaders are untouched.
+# Per-vertex RGBA with a front→back alpha fade sinks distant lines into the clear
+# colour. Geometry is cached and rebuilt only when the aperture / depth /
+# divisions / colour change (e.g. a Desktop-Mode resize, or a calibrated framing).
+
+class GridRoom:
+    """Wireframe shadow-box room anchored to the off-axis window aperture.
+
+    Drawn in WORLD space (the engine does NOT apply the Earth-anchor translate),
+    so the front rim sits on the glass at z = 0 by construction.
+    """
+
+    _A_FRONT = 0.55     # line alpha at the glass (z = 0)
+    _A_BACK  = 0.06     # line alpha at the back wall (z = -depth)
+    _A_RIM   = 0.78     # front rim (the "glass" anchor) a touch brighter
+
+    def __init__(self):
+        self._key = None
+        self._v = None      # float32 (N,3) line endpoints
+        self._c = None      # float32 (N,4) per-vertex RGBA
+
+    def _alpha_at(self, z: float, depth: float) -> float:
+        """Front (z=0) bright → back (z=-depth) faint, linear in depth."""
+        t = min(1.0, max(0.0, (-z) / depth)) if depth > 1e-6 else 0.0
+        return self._A_FRONT + (self._A_BACK - self._A_FRONT) * t
+
+    def _rebuild(self, half_w, half_h, depth, divisions, color) -> None:
+        v, c = [], []
+        r, g, b = color
+        D = max(1, int(divisions))
+
+        def line(p0, p1, a0=None, a1=None):
+            a0 = self._alpha_at(p0[2], depth) if a0 is None else a0
+            a1 = self._alpha_at(p1[2], depth) if a1 is None else a1
+            v.append(p0); c.append((r, g, b, a0))
+            v.append(p1); c.append((r, g, b, a1))
+
+        xs = [(-half_w + 2.0 * half_w * i / D) for i in range(D + 1)]
+        ys = [(-half_h + 2.0 * half_h * i / D) for i in range(D + 1)]
+        zs = [(-depth * i / D) for i in range(D + 1)]          # 0 → -depth
+        zb = -depth
+
+        # Back wall (z = -depth): vertical + horizontal grid.
+        for x in xs: line((x, -half_h, zb), (x, half_h, zb))
+        for y in ys: line((-half_w, y, zb), (half_w, y, zb))
+        # Floor (y = -half_h) and ceiling (y = +half_h): grids in X and Z.
+        for yw in (-half_h, half_h):
+            for x in xs: line((x, yw, 0.0), (x, yw, zb))
+            for z in zs: line((-half_w, yw, z), (half_w, yw, z))
+        # Left / right walls (x = ±half_w): grids in Y and Z.
+        for xw in (-half_w, half_w):
+            for y in ys: line((xw, y, 0.0), (xw, y, zb))
+            for z in zs: line((xw, -half_h, z), (xw, half_h, z))
+        # Front rim on the glass (z = 0) — the zero-parallax window frame.
+        rim = [(-half_w, -half_h, 0.0), (half_w, -half_h, 0.0),
+               ( half_w,  half_h, 0.0), (-half_w, half_h, 0.0)]
+        for i in range(4):
+            line(rim[i], rim[(i + 1) % 4], self._A_RIM, self._A_RIM)
+
+        self._v = np.array(v, dtype=np.float32)
+        self._c = np.array(c, dtype=np.float32)
+
+    def draw(self, half_w, half_h, depth, divisions, color,
+             time_s: float = 0.0, dpi_scale: float = 1.0) -> None:
+        key = (round(half_w, 3), round(half_h, 3), round(depth, 3),
+               int(divisions), tuple(round(float(x), 3) for x in color))
+        if key != self._key:
+            self._rebuild(half_w, half_h, depth, divisions, color)
+            self._key = key
+
+        glUseProgram(0)
+        glEnable(GL_DEPTH_TEST)
+        glDepthMask(GL_FALSE)           # blended lines: test, but don't write depth
+        glDisable(GL_TEXTURE_2D)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        try:
+            glEnable(GL_LINE_SMOOTH)
+            glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
+        except Exception:
+            pass
+        glLineWidth(max(1.0, dpi_scale))
+
+        glEnableClientState(GL_VERTEX_ARRAY)
+        glEnableClientState(GL_COLOR_ARRAY)
+        glVertexPointer(3, GL_FLOAT, 0, self._v)
+        glColorPointer(4, GL_FLOAT, 0, self._c)
+        glDrawArrays(GL_LINES, 0, len(self._v))
+        glDisableClientState(GL_COLOR_ARRAY)
+        glDisableClientState(GL_VERTEX_ARRAY)
+
+        try:
+            glDisable(GL_LINE_SMOOTH)
+        except Exception:
+            pass
+        glDepthMask(GL_TRUE)
+        glDisable(GL_BLEND)
+        glColor4f(1.0, 1.0, 1.0, 1.0)
+
+
+def draw_window_frame(half_w: float, half_h: float,
+                      color=(0.5, 0.75, 1.0), alpha: float = 0.45,
+                      inset: float = 0.965, dpi_scale: float = 1.0) -> None:
+    """Thin rectangle at the glass plane (world z = 0), inset slightly so it
+    reads as a floating 'this is a window' frame — a zero-parallax depth anchor.
+
+    Opt-in per world via rendering.show_window_frame; default OFF, so the shipped
+    worlds are visually unchanged. Fixed-function lines — no shader. The caller
+    draws this in the base (world-space) modelview, AFTER the scene body."""
+    hw, hh = half_w * inset, half_h * inset
+    glUseProgram(0)
+    glDisable(GL_TEXTURE_2D)
+    glEnable(GL_DEPTH_TEST)
+    glDepthMask(GL_FALSE)
+    glEnable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+    try:
+        glEnable(GL_LINE_SMOOTH)
+        glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
+    except Exception:
+        pass
+    glLineWidth(max(1.0, dpi_scale))
+    glColor4f(color[0], color[1], color[2], alpha)
+    glBegin(GL_LINE_LOOP)
+    glVertex3f(-hw, -hh, 0.0)
+    glVertex3f( hw, -hh, 0.0)
+    glVertex3f( hw,  hh, 0.0)
+    glVertex3f(-hw,  hh, 0.0)
+    glEnd()
+    try:
+        glDisable(GL_LINE_SMOOTH)
+    except Exception:
+        pass
+    glDepthMask(GL_TRUE)
+    glDisable(GL_BLEND)
+    glColor4f(1.0, 1.0, 1.0, 1.0)

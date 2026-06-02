@@ -154,13 +154,21 @@ def perspective(fovy_deg=FOVY_DEG, aspect=1.0, near=NEAR, far=FAR) -> np.ndarray
 WINDOW_HALF_H = CAM_BASE_Z * math.tan(math.radians(FOVY_DEG) * 0.5)
 
 
-def window_half_extents(aspect: float) -> tuple[float, float]:
-    """(half_width, half_height) of the physical window rect at z = 0, world units."""
-    return WINDOW_HALF_H * aspect, WINDOW_HALF_H
+def window_half_extents(aspect: float, half_h: float | None = None) -> tuple[float, float]:
+    """(half_width, half_height) of the physical window rect at z = 0, world units.
+
+    `half_h` is an OPT-IN override of the frozen WINDOW_HALF_H, used only by the
+    per-user metric-calibration path ([[Engine/calibration.py]]). When None (the
+    default, and the only value any frozen caller/sim passes) this returns the
+    calibrated cinematic framing byte-for-byte — the freeze is preserved.
+    """
+    h = WINDOW_HALF_H if half_h is None else float(half_h)
+    return h * aspect, h
 
 
 def off_axis_frustum(cam_x: float, cam_y: float, cam_z: float,
-                     aspect: float, near: float = NEAR, far: float = FAR) -> np.ndarray:
+                     aspect: float, near: float = NEAR, far: float = FAR,
+                     half_h: float | None = None) -> np.ndarray:
     """
     glFrustum-form projection matrix for an eye at (cam_x, cam_y, cam_z) looking
     through the fixed window rect at z = 0. Reduces to perspective(FOVY_DEG) when
@@ -170,8 +178,15 @@ def off_axis_frustum(cam_x: float, cam_y: float, cam_z: float,
     Kooima's frame-alignment rotation is identity and the eye→screen distance is
     simply cam_z. The frustum edges at the near plane are the window corners
     scaled by near/cam_z and shifted by the eye offset.
+
+    `half_h` is an OPT-IN window half-height (world units). Default None ⇒ the
+    frozen WINDOW_HALF_H, so this is byte-identical to the pre-calibration matrix
+    for every existing caller and headless sim. The metric-calibration layer
+    passes a custom half_h to match the user's real screen subtense; the matrix
+    algebra below is unchanged either way. Backward-compat + the metric path are
+    pinned by Scripts/validation/sim_calibration.py.
     """
-    half_w, half_h = window_half_extents(aspect)
+    half_w, half_h = window_half_extents(aspect, half_h)
     d = max(cam_z, 1e-3)          # eye distance to the glass (guard /0)
     s = near / d
     l = (-half_w - cam_x) * s

@@ -2,7 +2,7 @@
 title: Ingestion Log
 type: metadata
 related: [index]
-last_updated: 2026-06-01
+last_updated: 2026-06-02
 sources: []
 ---
 
@@ -762,3 +762,334 @@ constraint), but the path is the proven no-FBO fallback.
 
 **Wiki updated.** [[current-focus]] (top section rewritten — bloom removal
 replaces the per-world gate), and this log entry.
+
+---
+
+## [2026-06-02] docs | The Grid Room — world page + index integration
+
+**Scope.** The Grid Room world (`Worlds/grid_room/world.json`, `GridRoom` renderer
+class in `Engine/renderer.py`) existed in the source tree and was documented in
+the architecture-layer [[grid-api-customization]] page but was **not documented as
+a playable world**. Created a dedicated world page and updated all world-related
+indexes to list it as the fourth available world.
+
+### Created
+
+- **New page:** `obsidian-docs/worlds/grid-room.md` — comprehensive world reference
+  (92 KB) covering what the Grid Room is (spatial-reference scaffold), how it renders
+  (wireframe cyan `GL_LINES` shadow-box in world space), dimensions (±11.33 × ±6.375
+  × 18 deep, 8×8 grid cells), constraints (no shaders, alpha fade front→back, mesh
+  cached), and integration with parallax. Related links tie it to [[gem]] (which shares
+  grid dimensions), [[grid-api-customization]], and [[world-system]].
+
+### Updated
+
+- **`obsidian-docs/index.md`:** Intro text updated "Three worlds ship" → "Four worlds
+  are available". Added Grid Room row to the worlds table (summary: "wireframe
+  spatial-reference calibration tool").
+- **`obsidian-docs/worlds/worlds-index.md`:** Expanded comparison table from 3 columns
+  to 4. Now includes Grid Room properties: `primary_mesh: "room"`, `GridRoom` renderer,
+  **no shaders** (fixed-function only), cyan color, 18.0 depth, 8 divisions (matching
+  Gem), use case (reference/calibration vs. scenic). Updated intro to "Four worlds:
+  three scenic, one utility/calibration". Updated "Systems every world uses" and
+  "Adding a world" sections to list `room` as a valid `primary_mesh` type.
+- **Related links:** Backlinks added to [[gem]] (which references grid dimensions),
+  [[grid-api-customization]] (the design-decision that describes the grid API), and
+  [[world-system]].
+
+### Design notes
+
+The Grid Room is **not a scenic experience** but a **spatial-reference utility and
+API surface** for the [[grid-api-customization]] safe-customization framework. Its
+receding wireframe grid teaches users/Claude the coordinate system directly on
+screen; the converging lines provide the parallax illusion with a strong motion-
+parallax cue; the rigid box helps the visual system distinguish head motion from
+tracking jitter. No shaders (frozen GLSL is untouched); fully procedural geometry
+(cached based on aperture dimensions, rebuilt only on resize). The cyan color was
+chosen to complement both white-background worlds ([[gem]]) and blue starfields
+([[earth]]).
+
+**Wiki updated.** `[[grid-room]]` (new page), `[[worlds-index]]`, `[[index.md]]`,
+and this log entry.
+
+---
+
+## [2026-06-02] feature | The Gem — checkered enclosure box (floor → full grid box)
+
+**Scope.** First of two requested Gem updates. Replaced the Gem world's single
+flat checkered floor with a full **checkered enclosure box** — the pink gem now
+floats inside a pink-and-white checker room that shares the [[grid-room]]'s
+dimensions, with each checker square sized to exactly one grid cell ("the checker
+IS the grid"). No camera math, physics, or shader code touched.
+
+### What changed
+
+**`Engine/renderer.py` — `Gem` class.**
+- Removed the old infinite flat floor (`_build_floor_mesh` / `_draw_floor`,
+  `_FLOOR_HALF=600`, `_FLOOR_DIVS`, `_FLOOR_TILE`, `_FLOOR_Y`).
+- Renamed `_build_floor_texture` → `_build_checker_texture` (unchanged pink/white
+  8×8 `GL_REPEAT` checker; pink `(255,182,193)`, white `(255,255,255)`).
+- New `_build_box_mesh(half_w, half_h, depth, divisions)`: five interior faces —
+  floor, ceiling, back wall, left/right walls — as textured quads in WORLD space
+  (front rim on the glass at z = 0, back wall at z = −depth, floor/ceiling at
+  y = ∓half_h, walls at x = ±half_w). Each face's UVs run `0..(divisions/8)`, so
+  the 8×8 checker lays down exactly `divisions` checks across the `divisions`
+  cells of every face → **one check per grid cell**, the checks stretched to match
+  each face's (non-square) cell aspect. 30 verts / 30 UVs, rebuilt + cached on a
+  dimension key like [[grid-room]].
+- New `draw_box(...)`: draws the cached faces (flat, unlit, fixed-function,
+  `GL_CULL_FACE` off so interior faces always show) + the grounding shadow.
+- Shadow disk rebuilt in the `y = 0` plane and re-positioned by `draw_box` onto
+  the box floor (`y = −half_h`) directly beneath the gem anchor (`_GEM_ANCHOR_Z =
+  −10`), instead of the old fixed `y = −3.30` mid-air disk.
+- `Gem.draw()` is now gem-mesh-only (spin + tilt + shader unchanged).
+
+**`Launcher/app_engine.py`.** The gem world builds the gem lazily and calls
+`gem.draw_box(hw, hh, world.grid_depth, world.grid_divisions)` in WORLD space
+**before** the Earth-anchor translate (like the Grid Room), then draws the gem at
+the z = −10 anchor so it floats inside the box. The in-translate gem branch is now
+draw-only.
+
+**`Worlds/gem/world.json`.** Added `grid_depth: 18.0` + `grid_divisions: 8`
+(explicit; they also match the `WorldRuntime` defaults and the [[grid-room]]).
+Removed the now-unused `floor_texture` key (the checker is generated in-memory).
+Bumped to v1.1.
+
+### Dimensions
+
+Aperture-derived: `half_w = WINDOW_HALF_H·aspect ≈ 11.33` (16:9), `half_h =
+WINDOW_HALF_H ≈ 6.375`, `depth = 18`, `divisions = 8`. Per-cell (= per-check)
+sizes: X 2.833, Y 1.594, Z 2.250 world units. The gem (girdle r = 2.2, y ∈
+[−2.80, 0.79], z = −10) sits fully inside the box, floating ≈3.57 u above the
+checker floor.
+
+### Validation
+
+- `py_compile` clean on `renderer.py` + `app_engine.py`; `gem/world.json` parses.
+- All **9** headless sims pass (`sim_calibration/camlag/latency/offaxis/orbit/
+  overlay/predict/vertical/viewing` — RESULT: all checks passed), run under the
+  `.venv` (pygame).
+- Standalone numeric check of `_build_box_mesh`: 30 verts, UV span 0..1 at
+  divisions = 8 (exactly one check per cell), box extents ±11.33 × ±6.375 ×
+  0..−18, gem fully enclosed.
+- The GL/visual result needs a live GUI session to confirm (standing renderer
+  constraint); the path is the proven fixed-function textured-quad + client-array
+  shadow already used by the old floor.
+
+**Wiki updated.** [[gem]] / [[the-gem]] (floor → checkered box), [[worlds-index]]
+(floor/shadow rows), and this log entry.
+
+---
+
+## [2026-06-02] fix | Per-world enveloping zoom + late look-gate for enclosure worlds
+
+**Symptom (user, in the Grid Room).** Moving CLOSER made the grid *shrink* —
+reading as "zooming out" — instead of enveloping the viewer, and the rotational
+"look" was active at ordinary forearm distance, letting the viewer rotate the
+z = 0 window plane and **peer past the bezel-locked front rim**. The desired
+behaviour: all motion translational and rim-locked during approach, with
+rotational look engaging only once *enveloped* (~10–15 cm from the camera).
+
+**Root cause (two consuming-layer issues, NOT frozen camera_math).**
+1. *Zoom direction.* `Launcher/app_engine.py` mapped `cz = BASE_Z·e^(+ZOOM_K·hz)`
+   for every world, so leaning IN *increased* cz → narrower telephoto frustum.
+   That is the calibrated, deliberate feel for a single FOREGROUND object (the
+   Earth grows on approach — pinned by `sim_viewing`/`sim_vertical`), but it is
+   backwards for an ENVIRONMENT you enter: a real shadow-box envelops you as the
+   eye nears the glass (smaller cz → wider frustum). The window-correct sense is
+   the one [[off-axis-projection]] already documents.
+2. *Rotation gate.* `om.proximity(hz)` used the frozen default window `[0.0, 0.8]`,
+   so rotation began the instant the viewer leaned past neutral — un-pinning the
+   rim at forearm distance.
+
+**Why per-world, not global.** A global zoom flip would (a) invert the Earth's
+deliberately-calibrated telephoto zoom and (b) break `sim_viewing` checks 1–2 and
+gut `sim_vertical`'s near-field "push the planet off-screen" exploration (a wide
+close-range frustum can't pan a foreground object past half-FOV under the 46°
+anti-nausea clamp). Both were explored and rejected with the user; the chosen
+scope is **enclosure worlds only**.
+
+**Fix.** A declarative `rendering.enveloping` flag (default **False** → object
+worlds byte-identical). New `WorldRuntime.enveloping` property; set `true` in
+`Worlds/grid_room/world.json` and `Worlds/gem/world.json`. In `app_engine.py`:
+- `zoom_sign = -1.0 if world.enveloping else 1.0` → enclosure `cz = BASE_Z·e^(−ZOOM_K·hz)`
+  (lean IN → cz 11.5→5.0, FOV 58°→104°, envelopment); object path unchanged.
+- enclosure rotation uses `om.proximity(hz, lo=ROT_GATE_LO=0.7, hi=ROT_GATE_HI=1.0)`
+  (zero look until enveloped, smooth ramp to full at hz=1.0); object path keeps the
+  frozen default gate. **camera_math.py untouched** (lo/hi passed as args).
+
+**Validation.** New guard `Scripts/validation/sim_envelop.py` (window-correct zoom
+monotone, rim bezel-locked at every approaching eye, look gated to envelopment +
+C¹, per-world sign genuinely flips). **All 10 headless sims pass**; `sim_viewing`
+and `sim_vertical` are **byte-identical to before** (object path preserved), so the
+Earth/Watcher feel + their guards are intact. Live GL confirmation in the Grid Room
+still needs a GUI session (standing renderer constraint).
+
+**Files.** `Launcher/app_engine.py`, `Worlds/world_runtime.py`,
+`Worlds/grid_room/world.json`, `Worlds/gem/world.json`,
+`Scripts/validation/sim_envelop.py` (new). Records: [[known_issues]],
+[[current-focus]], [[constraints]], [[off-axis-projection]], [[grid-room]].
+
+---
+
+## [2026-06-02] change | Enclosure depth model → forward dolly (replaces the same-day frustum-widen)
+
+**Trigger.** With the enclosure model from the entry above shipped, leaning IN to
+the Grid Room / Gem made the grid squares *expand and stretch* (perceived depth
+~doubled) and the floating gem *shrink* — the opposite of the wanted "move in =
+zoom in." The ~15 cm rotational look also sheared/distorted the still-visible grid
+instead of cleanly rotating once enveloped.
+
+**Why the previous model did that (not a bug — geometry).** The earlier fix used
+`cz = BASE_Z·e^(−ZOOM_K·hz)`, so leaning in shortened `cz` and WIDENED the off-axis
+frustum. That is the geometrically-correct *fixed-window* result, but a foreground
+object at `z = −10` has on-screen size ∝ `cz/(cz+10)`, so a smaller `cz` shrinks it
+and stretches the receding grid. Window-correct, wrong feel.
+
+**Fix — forward dolly (per-world mechanism, user-chosen).** For `enveloping = true`
+worlds the engine now HOLDS `cz = BASE_Z` (FOV constant at 58° — no lens zoom) and
+translates the whole scene toward the eye by `dolly = clamp(DOLLY_GAIN·hz,
+[DOLLY_MIN, DOLLY_MAX])` world units along −z, baked into the modelview
+(`mv = view_matrix(...) @ T(0,0,dolly)`). Leaning in dollies the camera INTO the
+room: the gem grows with honest perspective (≈2.5× at full lean), the walls slide
+past, and the front rim expands off-screen until it clears the near plane
+(enveloped). Look-gate tightened to `om.proximity(hz, lo=ROT_GATE_LO=0.88,
+hi=ROT_GATE_HI=1.0)`, tuned so the rim is already off-screen before any pan engages
+— so the look can never shear a visible grid edge. Object worlds set `dolly ≡ 0`
+and keep telephoto `cz` → byte-identical (`max |Δcz| = 0`). `DOLLY_GAIN = 13`,
+`DOLLY_MAX = 14`, `DOLLY_MIN = 0` (a hard zoom-out floor — leaning back past the
+neutral, bezel-locked framing does NOT pull the camera further out; you dolly in
+from there and back out only to it). **camera_math.py untouched** (dolly is a
+modelview translate; gate lo/hi are call args).
+
+**Validation.** Rewrote `Scripts/validation/sim_envelop.py` to pin the dolly
+invariants: constant FOV; monotone forward dolly; foreground gem GROWS on lean-in
+(208→747 px, 2.53× neutral→enveloped); rim past the near plane when enveloped and
+bezel-locked exactly at neutral; look zero through the approach with the rim already
+off-screen the moment it engages; C¹ gate; object path untouched. **All 10 headless
+sims pass** (`sim_viewing` / `sim_vertical` / `sim_offaxis` / `sim_orbit`
+unchanged). Live GL "feel" tuning of `DOLLY_GAIN` / `ROT_GATE_LO` still needs a GUI
+session (standing renderer constraint).
+
+**Files.** `Launcher/app_engine.py` (DOLLY_* constants, per-world depth-response
+block, modelview dolly, raised ROT_GATE_LO), `Worlds/world_runtime.py`
+(`enveloping` docstring), `Scripts/validation/sim_envelop.py` (rewritten). World
+JSONs unchanged. Records: [[known_issues]], [[current-focus]], [[constraints]],
+[[off-axis-projection]], [[grid-room]], [[the-gem]].
+
+---
+
+## [2026-06-02] tune | Enclosure rotational look — engage earlier + much smoother ramp
+
+**Trigger.** User, in the enclosure worlds ([[grid-room]] / [[the-gem]]): enable the
+rotational "look" ~5–10 cm further from the screen than it engages now (begin around
+the 15–20 cm proximity band), and **vastly smooth** the transition.
+
+**What the knobs are.** The look is gated by `om.proximity(hz, lo=ROT_GATE_LO,
+hi=ROT_GATE_HI)` — a smoothstep on the tracker's head-z (`hz`, face-size based;
+**no documented cm mapping**, so the cm targets translate to an hz threshold tuned
+live). The forward dolly carries the front rim off-screen at `dolly > BASE_Z − NEAR
+≈ 11.2` (`dolly = DOLLY_GAIN·hz`). The standing design rule (and `sim_envelop.py`)
+requires the **rim gone BEFORE the look engages**, else a pan shears a still-visible
+grid edge — the exact "grid distorts" regression the user reported on 2026-06-02 and
+the reason the gate had been raised to 0.88.
+
+**Decision (user-chosen: "earlier + keep it clean").** Lower the gate AND raise the
+dolly gain together so the rim still clears first — earlier look with **no** shear,
+at the cost of dollying into the room a little faster (explicitly accepted).
+
+**Change (consuming layer only — `camera_math.py` untouched; lo/hi/gain are
+args/constants in `app_engine.py`).**
+- `ROT_GATE_LO` **0.88 → 0.75** — look begins further from the screen.
+- `ROT_GATE_HI` 1.0 (unchanged) → window **[0.75, 1.0]** vs old [0.88, 1.0]: ~2×
+  wider, so the smoothstep ramp is ~2× gentler (the "vastly smoother" fade).
+- `DOLLY_GAIN` **13.0 → 15.5** — rim now clears at `hz ≈ 0.72` (= 11.2/15.5),
+  *before* the 0.75 gate, preserving "rim gone first."
+- `DOLLY_MAX` **14.0 → 16.0** — keeps `dolly` rising past the old clamp so the
+  foreground body still grows **monotonically all the way to hz = 1.0** (gem now
+  ≈3.6× at full lean vs the prior ≈2.5×; honest consequence of the faster dolly).
+- `DOLLY_MIN` 0.0 (unchanged) — the bezel-locked zoom-out floor is intact.
+
+**Validation.** `sim_envelop.py` updated in sync (constants + the check-5 zero-look
+assertion list, which had pinned `prox(0.8)==0` — now `prox(0.7)==0`, since 0.8 sits
+inside the new engagement window). The rim-clears-before-look invariant re-verified:
+rim eye_z = **+0.12** at the new gate hz = 0.75 (> −NEAR, off-screen). **All 10
+headless sims pass**; `py_compile` clean. Live GL "feel" confirmation of the exact
+cm landing point still needs a GUI session (standing renderer constraint) — the hz
+threshold is the live-calibration knob.
+
+**Files.** `Launcher/app_engine.py` (DOLLY_*, ROT_GATE_LO + comments),
+`Scripts/validation/sim_envelop.py` (synced constants + assertion). Records:
+[[grid-room]], [[the-gem]], and this entry.
+
+---
+
+## [2026-06-02] merge | Grid + sphere merge — enclosures gain Earth's blended look while keeping their bezel anchor
+
+**Trigger.** User decision: "take the good parts of the grid worlds and the good
+parts of the sphere worlds and merge them." The [[earth]] (sphere/object) world has
+the better **zooming + eye-looking** — rotation and translation coexist across a wide
+proximity band, so it feels like *moving around* the scene. The enclosure worlds
+([[grid-room]], [[the-gem]]) have the better **screen anchor** — the bezel-locked
+front rim. The standing analysis page [[what-makes-perspective-optimal]] had already
+diagnosed why and proposed the path; this entry **executes the proposed update**.
+
+**What was wrong.** Enclosures deferred ALL rotational look until the viewer was
+nearly enveloped (`om.proximity(hz, [0.75, 1.0])`), giving a SEQUENTIAL "first move
+in, THEN look around" feel — the opposite of Earth's blended band [0.0, 0.8]. We
+couldn't simply open the gate early, because rotating while the front rim is still on
+screen shears the visible grid (the prior "grid distorts" regression).
+
+**Fix — amplitude-gated early look (the option-4 path from the analysis page;
+consuming layer only).** The single enclosure look weight is split into two
+smoothstep factors, `prox = engage(hz)·amp(hz)`:
+- `engage = om.proximity(hz, lo=LOOK_ENGAGE_LO=0.35, hi=LOOK_ENGAGE_HI=1.0)` — opens
+  EARLY and WIDE, mirroring Earth's band, so the look blends with the forward dolly
+  across the whole approach. `engage(0)=0`, so the resting rim stays bezel-locked.
+- `amp = LOOK_PRELOOK_AMP + (1−LOOK_PRELOOK_AMP)·om.proximity(hz, [LOOK_AMP_LO,
+  LOOK_AMP_HI])` — caps the look AMPLITUDE to `LOOK_PRELOOK_AMP = 0.22` while the
+  front rim is still on screen, then ramps to full as the rim clears the near plane.
+  `LOOK_AMP_LO = (BASE_Z − NEAR)/DOLLY_GAIN ≈ 0.72` is **derived** from `DOLLY_GAIN`,
+  so cap-release always tracks the actual rim clear (they stay coupled if either is
+  retuned); `LOOK_AMP_HI ≈ 0.92`.
+
+**Why it's shear-free (verified numerically).** The bezel-locked rim leaves the
+*screen* the instant the dolly starts — its corners are off-screen by hz ≈ 0.02, the
+whole frame gone shortly after — i.e. long before the look engages at hz ≈ 0.35. So
+during its on-screen exit the look is exactly zero and the rim never shears. After
+that, the only still-visible geometry that could shear is the receding interior grid,
+and the amplitude cap keeps that pan gentle until envelopment. Full-strength look
+arrives only once enveloped (rim long gone). The product of two smoothsteps is
+monotone and C¹ — no felt mode switch.
+
+**Scope discipline.** `Engine/camera_math.py` is **untouched** — every `lo/hi` is a
+`proximity()` call argument; the frozen smoothstep is unchanged. Object worlds keep
+the frozen `om.proximity(hz)` gate ([0.0, 0.8]) and never amplitude-cap, so
+Earth/The Watcher are byte-identical. The forward-dolly *depth* model and the
+`DOLLY_MIN = 0` zoom-out floor are unchanged. The old `ROT_GATE_LO/HI` constants are
+replaced by the `LOOK_*` block.
+
+**Validation.** Rewrote `Scripts/validation/sim_envelop.py` check-5 to pin the merged
+invariants: (a) zero look at neutral/lean-out (rim bezel-locked); (b) the MERGE — the
+look engages EARLY (prox(0.5) > 0) where the old sequential gate was exactly 0; (c)
+look amplitude capped ≤ 0.22 until the rim clears, and the capped early pan is a small
+fraction of the enveloped pan; (d) full amplitude + significant reveal once enveloped;
+(e) monotone reveal; (f) C¹ (max step 0.0026). Measured: prox(0.5)=0.030,
+reveal grows 0→307 px, gem still grows 3.58× on lean-in (depth model intact). **All 10
+headless sims pass**; `sim_viewing` / `sim_vertical` / `sim_offaxis` / `sim_orbit`
+unchanged (object path preserved); `py_compile` clean. Live GL "feel" calibration of
+`LOOK_ENGAGE_LO` / `LOOK_PRELOOK_AMP` still wants a GUI pass (standing renderer
+constraint) — the geometry/invariants are settled; the perception threshold is the
+human's call.
+
+**Files.** `Launcher/app_engine.py` (replaced the `ROT_GATE_*` block with the merged
+`LOOK_*` block + per-world `prox = engage·amp`; updated the DOLLY_GAIN comment),
+`Worlds/world_runtime.py` (`enveloping` docstring), `Scripts/validation/sim_envelop.py`
+(constants + helpers + check-5 + docstring rewritten).
+
+**Wiki updated.** [[what-makes-perspective-optimal]] (the proposal page — now marked
+implemented, with the shipped design + remaining live-feel pass), [[viewing-models]]
+(Method B look), [[off-axis-projection]] (rotation component), [[constraints]]
+(per-world depth response), [[grid-room]] + [[the-gem]] (enclosure look),
+[[current-focus]] (new top entry), [[known_issues]] (update note on the dolly entry),
+and this log entry.

@@ -1,8 +1,8 @@
 ---
 title: Productification Roadmap
 type: strategy
-related: [design-decisions, version-history, distribution-checklist, world-system, worlds-index, dmg-build-process, current-focus, constraints, known_issues, system-interactions]
-last_updated: 2026-05-31
+related: [design-decisions, version-history, distribution-checklist, world-system, worlds-index, dmg-build-process, current-focus, constraints, known_issues, system-interactions, menu-bar-ui, grid-api-customization]
+last_updated: 2026-06-02
 sources: [Docs/IRIS_OVERVIEW.txt, Docs/FIRST_LAUNCH_AND_DMG_DESIGN.md, obsidian-docs/releases/version-history.md, obsidian-docs/architecture/design-decisions.md, obsidian-docs/architecture/constraints.md, obsidian-docs/releases/distribution-checklist.md]
 ---
 
@@ -171,6 +171,7 @@ Scalable Platform
 
 **Success criteria:**
 - Three worlds ship: [[earth]] + [[the-watcher]] + Gem (renderer already supports Gem; needs `world.json` + textures)
+- [[menu-bar-ui]] deployed: always-visible menu bar icon for camera toggle, exit-desktop-mode, and settings access (solves UX friction of "trapped in wallpaper")
 - LaunchAgent integrated in Settings → "Launch at login"
 - GitHub Releases page with versioned DMG links
 - A one-page landing page: 15-second demo GIF / video, download button, privacy statement
@@ -281,6 +282,7 @@ Scalable Platform
 **Objective.** A creator ecosystem and multi-platform reach.
 
 **Success criteria:**
+- [[grid-api-customization]]: spatial coordinate system for safe, user-friendly world customization. Grid-aligned asset placement (locked physics, mutable assets only) enables Claude-assisted world building and procedural generation.
 - World creator tool: a GUI or validated schema editor producing compliant `world.json` files without touching engine code
 - Community submission pipeline: GitHub PR template or hosted upload portal
 - 10+ community-contributed worlds available
@@ -289,6 +291,7 @@ Scalable Platform
 **Dependencies:**
 - Milestone 5 (stable revenue funds platform investment)
 - A published, versioned `world.json` schema with a renderer capability matrix (what JSON fields produce what visual effects)
+- [[grid-api-customization]] implementation: extended schema, renderer asset-placement support, optional UI
 - An engaged community channel with active contributors
 
 **Risks:**
@@ -362,7 +365,7 @@ IRIS's local-processing model (no video stored, no cloud, no PII) is a genuine d
 1. **Virality via screen recording.** Head-tracked parallax demos itself in any screen recording or GIF. A one-click "record 10-second demo" export is a free acquisition channel.
 2. **Gem world.** `renderer.Gem` already exists. One `world.json` + textures → three-world product. The single highest-leverage content action.
 3. **Corporate / conference demo.** The floating preview (scripted idle, no camera needed) is a compelling ambient display for trade shows, investor presentations, and open offices. A "kiosk mode" (no UI chrome, locked to scripted idle) could target this with minimal work.
-4. **Creator ecosystem.** The world system (JSON, no engine code) is already designed for external creators. A published schema + community channel = a content flywheel that grows the catalog without author time.
+4. **Creator ecosystem.** The world system (JSON, no engine code) is already designed for external creators. The [[grid-api-customization]] pattern (spatial coordinate system for asset placement; locked physics) makes world creation approachable for non-programmers and Claude-assisted workflows. A published schema + community channel = a content flywheel that grows the catalog without author time.
 5. **Privacy narrative.** As spatial computing (Vision Pro, etc.) normalizes always-on cameras, a local-processing, no-cloud, no-PII alternative has a genuine positioning advantage.
 
 ### Most Likely Failure Points

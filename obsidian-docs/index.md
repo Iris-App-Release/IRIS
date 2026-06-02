@@ -10,11 +10,11 @@ sources: []
 
 This is the organized "brain" for **IRIS** — a head-tracked spatial desktop
 ("fish-tank VR") wallpaper for macOS. A webcam tracks your head; an off-axis
-frustum re-renders a 3D world (Earth, or "The Watcher" eye) so the monitor reads
-as a window into 3D space. IRIS runs as an interactive onboarding demo or a
-click-through, always-on wallpaper. Three worlds ship: **Earth** (photo-real
-globe), **The Watcher** (horror eyeball), and **The Gem** (rotating hot-pink
-gemstone).
+frustum re-renders a 3D world so the monitor reads as a window into 3D space.
+IRIS runs as an interactive onboarding demo or a click-through, always-on
+wallpaper. Four worlds are available: **Earth** (photo-real globe), **The
+Watcher** (horror eyeball), **The Gem** (rotating hot-pink gemstone), and **The
+Grid Room** (wireframe spatial-reference calibration tool).
 
 This wiki was compiled once by reading the whole `IRIS APP/` source tree. It is a
 **read-only** reference — nothing here modifies the project. Pages cross-link with
@@ -52,7 +52,8 @@ Obsidian vault to browse them as a graph.
 | [Worlds Index](worlds/worlds-index.md) | Side-by-side comparison of all worlds + how to add one | world |
 | [Earth](worlds/earth.md) | The flagship world: photo-real rotating Earth, stars, nebula, orbital icons | world |
 | [The Watcher](worlds/the-watcher.md) | A giant unblinking eye in a black void (a reskin of the sphere pipeline) | world |
-| [The Gem](worlds/gem.md) | A brilliant hot-pink rotating gemstone in pure white space (flat-shaded, two-light, fully procedural) | world |
+| [The Gem](worlds/gem.md) | A brilliant hot-pink rotating gemstone floating in a checkered box (flat-shaded, two-light, fully procedural) | world |
+| [The Grid Room](worlds/grid-room.md) | Wireframe spatial-reference shadow-box with receding cyan grid lines (calibration + API scaffold for asset placement) | world |
 
 ## Releases
 
@@ -68,8 +69,13 @@ Obsidian vault to browse them as a graph.
 | Page | Summary | Type |
 |---|---|---|
 | [System Interactions](architecture/system-interactions.md) | Import chain, per-frame data flow, and the file-based message bus (diagrams) | architecture |
+| [Viewing Models](architecture/viewing-models.md) | The two illusion methods (object/telephoto vs. enclosure/forward-dolly) and how to choose one for a new world | architecture |
+| [What Makes Perspective Optimal](what-makes-perspective-optimal.md) | Why Earth's exploration feel is smooth (blended translation+rotation) and how to achieve it in enclosures | theory |
 | [Constraints](architecture/constraints.md) | Viewing distance, latency, camera/permission, GL, platform, and memory limits | architecture |
+| [Camera Indicator Light](camera-indicator-ethics.md) | Why the green light exists, why it can't be disabled, and why IRIS's transparent design is a feature | architecture |
 | [Design Decisions](architecture/design-decisions.md) | The *why* behind every major architectural choice | architecture |
+| [Menu Bar UI](architecture/menu-bar-ui.md) | Always-visible menu bar icon for exit, camera toggle, and settings access (solves "trapped in wallpaper" UX) | design-decision |
+| [Grid API Customization](architecture/grid-api-customization.md) | Spatial coordinate system for safe, user-friendly world asset placement (locked physics, mutable assets only) | design-decision |
 
 ## Project status
 

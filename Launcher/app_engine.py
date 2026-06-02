@@ -41,8 +41,9 @@ from OpenGL.GL  import *
 from OpenGL.GLU import gluPerspective, gluLookAt
 
 from Tracking.face_tracker import FaceTracker, DENIED
-from Engine.renderer import Earth, Stars, Nebula, IconOrbit, Eye, Gem
+from Engine.renderer import Earth, Stars, Nebula, IconOrbit, Eye, Gem, GridRoom, draw_window_frame
 from Engine import camera_math as om
+from Engine import calibration as calib_mod
 
 # Optional Cocoa hooks for desktop-level wallpaper mode
 try:
@@ -73,6 +74,10 @@ CAMERA_OFF_FLAG   = Path.home() / ".iris" / "camera_off"
 # UI writes the selected world into. Resolved for both source and frozen (_MEIPASS).
 _BUNDLE_BASE      = Path(getattr(sys, "_MEIPASS", None) or SCRIPT_PATH.parent.parent)
 PREFS_FILE        = Path.home() / ".iris" / "preferences.json"
+# Opt-in per-user metric calibration (screen size + viewing distance). Polled
+# live like the prefs/flag files; absent or disabled → the frozen framing is
+# used unchanged. See Engine/calibration.py.
+CALIBRATION_FILE  = Path.home() / ".iris" / "calibration.json"
 
 # Display modes
 #   wallpaper   – borderless desktop-level layer (DEFAULT, daemon-friendly)
@@ -113,23 +118,118 @@ CAM_LAG_TAU      = -(1.0 / CAM_LAG_REF_FPS) / math.log(1.0 - CAM_LAG)  # ≈ 0.0
 CAM_LAG_DT_MAX   = 0.10           # clamp the smoothing dt so a long stall (resume
                                   # from pause, first frame) can't snap in one step
 
-# Distance scaling (eye-to-glass distance). Exponential in head-z so the scale is
-# perceptually uniform (constant multiplier per unit lean) and spans the full
-# head-z range smoothly without clamping. cz = BASE_Z · e^(ZOOM_K · hz):
+# Depth response to head-z. There are TWO distinct mechanisms, chosen per world:
+#
+# OBJECT worlds (default, e.g. Earth / The Watcher) — TELEPHOTO via eye-to-glass
+# distance. Exponential in head-z so the scale is perceptually uniform (constant
+# multiplier per unit lean): cz = BASE_Z · e^(+ZOOM_K · hz):
 #   • hz = 0  → cz = BASE_Z (neutral framing preserved exactly)
 #   • lean IN  (hz→+1)  → larger cz → narrower frustum → world LARGER,  parallax weaker
 #   • lean OUT (hz→-0.7)→ smaller cz → wider  frustum → world smaller, parallax stronger
-# Distance-scaling and translational-parallax strength therefore share the single
-# variable cam_z, exactly as window optics couples them. (The previous build
-# DIVIDED, which inverted scaling — far looked zoomed-in; multiplying/exp is right.)
-ZOOM_K     = 0.95     # head-z → log eye distance; hz∈[-0.7,1] → cz∈[≈5.9, ≈29.7]
+#   This is the calibrated telephoto feel that sim_viewing / sim_vertical pin, and
+#   it keeps the near-field vertical "push the planet off-screen" exploration.
+#
+# ENCLOSURE worlds (world.enveloping = True, e.g. Grid Room / Gem) — FORWARD DOLLY.
+# Leaning in must read as physically MOVING INTO the room (the object of interest
+# grows with honest perspective, the walls slide past, you become enveloped), NOT
+# as a lens zoom. So the eye-to-glass distance is HELD at BASE_Z (the frustum/FOV
+# is the calibrated 58° at every distance — no "illusory zoom trick"), and instead
+# the whole scene is translated toward the eye by `dolly` world units along −z
+# (baked into the modelview, see the render loop). Equivalent to dollying the
+# camera forward into the enclosure:
+#   • hz = 0  → dolly = 0 (neutral framing preserved exactly; rim bezel-locked)
+#   • lean IN  (hz→+1)  → dolly →  DOLLY_GAIN → eye-to-object distance shrinks → the
+#     gem GROWS, the front rim expands past the screen edges and finally clears the
+#     near plane (rim out of sight = fully enveloped), the room surrounds the eye.
+#   • lean OUT (hz<0)   → dolly clamps at 0 (DOLLY_MIN) → the view never pulls back
+#     past the neutral, bezel-locked framing; that resting view is the zoom-out floor.
+# The earlier enclosure model FLIPPED the cz sign (lean in → smaller cz → WIDER
+# frustum), which is the geometrically-correct fixed-window result but SHRANK the
+# gem and stretched/deepened the grid on approach — the opposite of the intended
+# "zoom into the world" feel. The forward dolly replaces it. (off-axis-projection.md)
+ZOOM_K     = 0.95     # head-z → log eye distance; object hz∈[-0.7,1]→cz∈[≈5.9,≈29.7]
 CAM_Z_MIN  = 5.0      # safety clamps — do not bind in the normal head-z range
 CAM_Z_MAX  = 34.0
+
+# Forward-dolly gain for ENCLOSURE worlds (world units along −z per unit head-z).
+# DOLLY_GAIN is sized so the front rim (at world z = 0) clears the eye / near plane
+# (rim leaves the screen → viewer enveloped) at dolly > BASE_Z − NEAR ≈ 11.2, i.e.
+# at hz ≈ 0.72 (= 11.2 / DOLLY_GAIN). This rim-clear head-z is what LOOK_AMP_LO below
+# is DERIVED from: the merged enclosure look engages early (at capped amplitude) but
+# only un-caps to FULL strength as the rim clears here, so a full-amplitude pan can
+# never shear a still-visible grid edge (the early, pre-envelopment look is
+# amplitude-limited instead — see the LOOK_* block below). A full lean-in (hz→1.0)
+# dollies ~15.5 units, so the gem (at z = −10) closes from ~21.5 to ~6.0 world units
+# (≈3.6× larger).
+# DOLLY_MAX clamps beyond DOLLY_GAIN so the dolly keeps rising across the whole
+# head-z range (the gem grows monotonically all the way to full envelopment).
+# DOLLY_MIN = 0 is a HARD FLOOR at the neutral, bezel-locked framing: the enclosure
+# can be dollied IN from there and back OUT to it, but never further out — leaning
+# back past neutral does not pull the camera behind the bezel-locked grid (the rim
+# stays exactly on the screen edge as the resting view). This is a deliberate UX
+# limit, not a geometry constraint.
+#   CALIBRATE LIVE: DOLLY_GAIN sets how fast you move into the room (and where the
+#   rim clears → where the look reaches FULL amplitude, via LOOK_AMP_LO below).
+#   Raise it for a faster dolly + earlier full-strength look; lower it for a longer
+#   approach. The early look itself is opened by LOOK_ENGAGE_LO and bounded by
+#   LOOK_PRELOOK_AMP (see the LOOK_* block below).
+DOLLY_GAIN = 15.5
+DOLLY_MAX  = 16.0
+DOLLY_MIN  = 0.0      # hard floor: never zoom out past the bezel-locked neutral
 
 # Rotational-exploration gain (proximity-gated in the loop via om.proximity).
 # Horizontal (yaw) uses ROT_MAX_DEG — the user reports lateral looking already
 # feels excellent, so it is left untouched.
 ROT_MAX_RAD = math.radians(om.ROT_MAX_DEG)
+
+# ── Enclosure rotational "look" — MERGED model (2026-06-02) ───────────────────
+# GOAL (what-makes-perspective-optimal.md): give the ENCLOSURE worlds (Grid Room,
+# Gem) the SAME early, wide, BLENDED rotational exploration that makes the [[earth]]
+# object world feel optimal — translation (the dolly) and rotation (the look)
+# coexisting across a broad proximity band, so it reads as "moving AROUND the scene"
+# rather than a sequential "first move in, THEN look around" — WHILE keeping the
+# enclosure's bezel-locked screen anchor (the forward dolly + the on-glass front rim)
+# that the object worlds lack. This is the "take the good parts of both" merge: the
+# sphere worlds' eye-looking + the grid worlds' anchoring.
+#
+# The previous enclosure gate, proximity(hz, [0.88→0.75, 1.0]), deferred ALL rotation
+# until the viewer was nearly enveloped — the sequential feel. We cannot simply open
+# it early, because rotating while the front rim is still on screen shears the visible
+# grid edge (the "grid distorts" regression). The merge resolves this by SPLITTING the
+# single gate into two factors that are multiplied:
+#
+#       prox = engage(hz) · amp(hz)
+#
+#   • engage(hz) = proximity(hz, [LOOK_ENGAGE_LO, LOOK_ENGAGE_HI]) — opens EARLY and
+#     WIDE, mirroring Earth's [0.0, 0.8] band, so the look is available while the
+#     translation (dolly) still dominates → the blended feel. It is zero at neutral
+#     (engage(0) = 0), so the resting rim stays exactly bezel-locked (the anchor).
+#   • amp(hz) caps the rotation AMPLITUDE to LOOK_PRELOOK_AMP (~22 %) while the front
+#     rim is still on screen, then ramps to FULL (1.0) as the rim clears the near
+#     plane. So the early, blended look IS present through the approach but at a tiny
+#     amplitude → the residual shear of the still-visible grid is imperceptible (the
+#     amplitude-gated path from what-makes-perspective-optimal.md), and the look only
+#     reaches full strength once the viewer is enveloped (rim gone, nothing to shear).
+#
+# Both factors are smoothstep (C¹) and non-decreasing, so prox is monotone and C¹ —
+# no felt mode switch. LOOK_AMP_LO is DERIVED from DOLLY_GAIN as the head-z at which
+# the dolly carries the rim past the near plane ((BASE_Z − NEAR)/DOLLY_GAIN ≈ 0.72),
+# so the amplitude un-caps exactly as the rim leaves the screen — the two stay coupled
+# if either is retuned. OBJECT worlds are untouched: they keep the frozen proximity(hz)
+# gate ([0.0, 0.8]) and never amplitude-cap, so Earth/Watcher + sim_viewing/sim_vertical
+# are byte-identical. camera_math.py is untouched (every lo/hi is a proximity() arg).
+# Pinned by Scripts/validation/sim_envelop.py. Applied per-world via world.enveloping.
+#   CALIBRATE LIVE: LOOK_ENGAGE_LO sets how far from the screen the look starts (lower
+#   = more Earth-like blend, earlier rotation); LOOK_PRELOOK_AMP sets how much
+#   pre-envelopment look is allowed (raise it until the still-visible grid just begins
+#   to shear, then back off). LOOK_AMP_LO/HI track the rim clear and rarely need hand-
+#   tuning — they follow DOLLY_GAIN.
+LOOK_ENGAGE_LO   = 0.35   # head-z at which the enclosure look begins to fade in (early/wide, Earth-like)
+LOOK_ENGAGE_HI   = 1.0    # head-z at which the engagement weight reaches full
+LOOK_PRELOOK_AMP = 0.22   # rotation-amplitude cap while the front rim is still on screen (imperceptible shear)
+_RIM_CLEAR_HZ    = (BASE_Z - om.NEAR) / DOLLY_GAIN     # head-z at which the dolly clears the rim (≈0.72)
+LOOK_AMP_LO      = _RIM_CLEAR_HZ                        # amplitude begins ramping PRELOOK→full as the rim clears
+LOOK_AMP_HI      = min(1.0, _RIM_CLEAR_HZ + 0.20)      # amplitude reaches full once fully enveloped (≈0.92)
 
 # NEAR-FIELD VERTICAL EXPLORATION (Objective #2). Vertical looking gets its OWN,
 # larger gain than yaw so that up close the viewer can peer UP / DOWN far enough
@@ -361,6 +461,12 @@ def main() -> None:
     eye   = None   # The Watcher's eyeball — built lazily + guarded on first use,
                    # so an Earth-only session never touches the eye shader/texture.
     gem   = None   # The Gem — built lazily on first use, same guard pattern.
+    room  = None   # The Grid Room — wireframe shadow-box, built lazily, same guard.
+
+    # Live, mtime-cached metric calibration. Disabled by default, so half_h()→None
+    # (camera_math uses the frozen WINDOW_HALF_H) and shift_scale→1.0: the camera
+    # pipeline is byte-identical to before unless the user opts in.
+    calib = calib_mod.CalibrationRuntime(CALIBRATION_FILE)
     print(f"[main] World system ready — active '{world.name}', available {world.available()}")
 
     # Bloom post-processing has been removed (user decision, 2026-06-01). The
@@ -407,6 +513,7 @@ def main() -> None:
     # Camera & animation state
     cam_x = cam_y = 0.0
     cam_z         = BASE_Z
+    dolly         = 0.0         # enclosure forward-dolly offset (world units, −z); 0 for object worlds
     cam_yaw = cam_pitch = 0.0   # smoothed, proximity-gated view rotation (rad)
 
     # Sun in WORLD space — slight front-right + above
@@ -578,29 +685,62 @@ def main() -> None:
         # clamped so a long stall can't produce a one-frame snap.
         cam_alpha = 1.0 - math.exp(-min(dt, CAM_LAG_DT_MAX) / CAM_LAG_TAU)
 
+        # Per-user metric calibration (opt-in; default = frozen framing). Polled
+        # live so a Settings change / hand-edit takes effect without a restart.
+        #   • win_half_h is None when disabled → off_axis_frustum uses the frozen
+        #     WINDOW_HALF_H (byte-identical); a value matches the user's real
+        #     screen subtense at the neutral eye distance.
+        #   • shift is the lateral head-shift gain, scaled by parallax_gain (×1.0
+        #     when disabled).
+        calib.poll()
+        win_half_h = calib.half_h()
+        shift      = MAX_SHIFT * calib.shift_scale
+
         # 1. TRANSLATION (head position → eye position → off-axis frustum shear).
         # Horizontal axis is negated: the webcam image is mirrored left-right, so
         # raw hx tracks the wrong way. Flipping it gives the "looking through a
         # window" feel — head right reveals the scene's left side. Vertical (hy)
         # already reads correctly, so it is left unchanged.
-        cam_x += cam_alpha * (-hx * MAX_SHIFT        - cam_x)
-        cam_y += cam_alpha * ( hy * MAX_SHIFT * 0.55 - cam_y)
+        cam_x += cam_alpha * (-hx * shift        - cam_x)
+        cam_y += cam_alpha * ( hy * shift * 0.55 - cam_y)
 
-        # 2. DISTANCE SCALING (head depth → eye-to-glass distance). Leaning IN
-        # (hz → +1) pushes the eye AWAY from the glass so the frustum narrows and
-        # the world grows; leaning OUT (hz → -0.7) pulls the eye toward the glass
-        # so the frustum widens and the world recedes. (The previous build divided
-        # here, which inverted it — far looked zoomed-in. Multiplying is correct:
-        # closer = larger. The same cam_z also weakens/strengthens translational
-        # parallax, reproducing the spec's far-strong / close-reduced coupling.)
-        cam_z_target = max(CAM_Z_MIN, min(CAM_Z_MAX, BASE_Z * math.exp(ZOOM_K * hz)))
-        cam_z       += cam_alpha * (cam_z_target - cam_z)
+        # 2. DEPTH RESPONSE (head depth → on-screen scale), per-world.
+        # OBJECT worlds (default): TELEPHOTO. Leaning IN (hz → +1) pushes the eye
+        # AWAY from the glass so the frustum narrows and the world grows; leaning
+        # OUT pulls the eye toward the glass so the world recedes. cam_z also sets
+        # translational-parallax strength (strong far / reduced close), dolly = 0.
+        # ENCLOSURE worlds (world.enveloping): FORWARD DOLLY. The eye-to-glass
+        # distance is HELD at BASE_Z (FOV constant — no lens zoom), and instead the
+        # scene is translated toward the eye by `dolly` along −z (baked into the
+        # modelview below), so the gem GROWS with honest perspective and the room
+        # envelops the viewer as the front rim clears the screen. (off-axis-projection.md)
+        if world.enveloping:
+            cam_z_target = BASE_Z
+            dolly_target = max(DOLLY_MIN, min(DOLLY_MAX, DOLLY_GAIN * hz))
+        else:
+            cam_z_target = max(CAM_Z_MIN, min(CAM_Z_MAX, BASE_Z * math.exp(ZOOM_K * hz)))
+            dolly_target = 0.0
+        cam_z += cam_alpha * (cam_z_target - cam_z)
+        dolly += cam_alpha * (dolly_target - dolly)
 
         # 3. ROTATION (head orientation → view pan), gated by PROXIMITY so it is
         # weak far away and dominant up close — a smooth blend, never a switch.
         # Turning the head right pans the portal right (revealing the scene's
         # RIGHT — the opposite sense to translation, as intended).
-        prox        = om.proximity(hz)
+        # Enclosure worlds use the MERGED look (what-makes-perspective-optimal.md):
+        # engage EARLY + WIDE like Earth (rotation coexists with the dolly across a
+        # broad band — the blended feel), but CAP the amplitude while the front rim is
+        # still on screen so the visible grid never shears, ramping to full strength
+        # only once the rim clears (enveloped). prox = engage(hz)·amp(hz), both
+        # smoothstep ⇒ monotone + C¹. Object worlds keep the frozen default gate (their
+        # feel + sim_viewing/sim_vertical unchanged).
+        if world.enveloping:
+            engage  = om.proximity(hz, lo=LOOK_ENGAGE_LO, hi=LOOK_ENGAGE_HI)
+            amp     = LOOK_PRELOOK_AMP + (1.0 - LOOK_PRELOOK_AMP) * \
+                      om.proximity(hz, lo=LOOK_AMP_LO, hi=LOOK_AMP_HI)
+            prox    = engage * amp
+        else:
+            prox    = om.proximity(hz)
         yaw_target  =  yaw   * ROT_MAX_RAD * prox
         # Vertical uses its OWN larger gain (ROT_MAX_PITCH_RAD) so the viewer can
         # peer up/down far enough to push the Earth off-screen up close, then the
@@ -632,6 +772,12 @@ def main() -> None:
                     "cam_x": float(cam_x), "cam_y": float(cam_y), "cam_z": float(cam_z),
                     "cam_yaw": float(cam_yaw), "cam_pitch": float(cam_pitch),
                     "t_s": float(t_s),
+                    # Effective window half-height (frozen value unless the user
+                    # enabled metric calibration). Exported so the separate
+                    # orbital_icons.py process can match the GL engine's framing;
+                    # it currently assumes the frozen value, so under calibration
+                    # the 2-D desktop icons may drift until they read this.
+                    "win_half_h": float(win_half_h if win_half_h is not None else om.WINDOW_HALF_H),
                     "timestamp_ms": int(time.time() * 1000)
                 }
                 EARTH_STATE_FILE.write_text(json.dumps(state_data))
@@ -683,7 +829,7 @@ def main() -> None:
         # distance sets the subtended angle (the distance-scaling component). The
         # frustum itself carries no rotation — that lives in the modelview below.
         # Validated headlessly in sim_offaxis.py / sim_viewing.py.
-        proj = om.off_axis_frustum(cam_x, cam_y, cam_z, aspect)
+        proj = om.off_axis_frustum(cam_x, cam_y, cam_z, aspect, half_h=win_half_h)
         glMatrixMode(GL_PROJECTION)
         glLoadMatrixf(np.ascontiguousarray(proj.T, dtype=np.float32))
         glMatrixMode(GL_MODELVIEW)
@@ -692,6 +838,16 @@ def main() -> None:
         # When far (prox→0) cam_yaw/pitch decay to 0 and this is a pure window;
         # up close it pans the portal so the viewer can "peek around" the world.
         mv = om.view_matrix(cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
+        # ENCLOSURE forward dolly: translate the whole scene +z (toward the eye) by
+        # `dolly` so leaning in moves the camera INTO the room — the gem grows with
+        # honest perspective and the rim slides off-screen, with the FOV unchanged
+        # (cam_z is held at BASE_Z above). Right-multiply so it pre-translates world
+        # geometry before the view transform; the 3×3 rotation (→ sun_eye) is
+        # unaffected. dolly ≡ 0 for object worlds, so their modelview is unchanged.
+        if dolly != 0.0:
+            T = np.identity(4, dtype=np.float64)
+            T[2, 3] = dolly
+            mv = mv @ T
         glLoadMatrixf(np.ascontiguousarray(mv.T, dtype=np.float32))
 
         # Sun in EYE space (every shader does its math there). The view rotation
@@ -719,49 +875,85 @@ def main() -> None:
             stars.draw(t_s, dpi_scale=dpi_scale)
         # background == "void" → nothing drawn; the black clear colour IS the scene.
 
-        # 2. Primary body at the (unchanged) Earth anchor, so every world shares
-        #    the exact same off-axis parallax / zoom / rotation response.
-        bx, by, bz, pf = OBJECTS["earth"]
-        wx = bx + cam_x * pf
-        wy = by + cam_y * pf
+        # 2. Primary body. Most worlds anchor a single body at the (unchanged)
+        #    Earth anchor (z = -10) so they share the exact off-axis parallax /
+        #    zoom / rotation response. The Grid Room is the exception — an
+        #    ENVIRONMENT drawn in world space whose front rim lands on the glass
+        #    at z = 0 — so it is handled before the Earth-anchor translate.
+        hw, hh = om.window_half_extents(aspect, win_half_h)   # live aperture extents
 
-        glPushMatrix()
-        glTranslatef(wx, wy, bz)
-        if world.primary_mesh == "eye":
-            # Build the eyeball lazily on first use; if its shader/textures fail
-            # to load, log and fall back to Earth rather than crash the engine.
-            if eye is None:
+        if world.primary_mesh == "room":
+            # Wireframe shadow-box room — built lazily like Eye/Gem; on failure
+            # fall back to Earth rather than crash the engine.
+            if room is None:
                 try:
-                    eye = Eye()
+                    room = GridRoom()
                 except Exception as e:
-                    print(f"[main] The Watcher unavailable ({e}); falling back to Earth")
+                    print(f"[main] Grid Room unavailable ({e}); falling back to Earth")
                     world.select("earth")
-            if eye is not None:
-                eye.draw(sun_eye, t_s)
+            if room is not None:
+                room.draw(hw, hh, world.grid_depth, world.grid_divisions,
+                          world.grid_color, t_s, dpi_scale)
             else:
-                earth.draw(sun_eye, t_s)
-        elif world.primary_mesh == "gem":
-            # The Gem — brilliant-cut rotating gemstone on a pure white background.
-            # Built lazily; fallback to Earth if the shader fails to compile.
-            if gem is None:
-                try:
-                    gem = Gem()
-                except Exception as e:
-                    print(f"[main] The Gem unavailable ({e}); falling back to Earth")
-                    world.select("earth")
-            if gem is not None:
-                gem.draw(sun_eye, fill_eye, t_s)
-            else:
-                earth.draw(sun_eye, t_s)
+                glPushMatrix(); glTranslatef(0.0, 0.0, OBJECTS["earth"][2])
+                earth.draw(sun_eye, t_s); glPopMatrix()
         else:
-            earth.draw(sun_eye, t_s)
-            # Orbital icons live in EARTH-LOCAL space — drawn inside the very same
-            # transform so they inherit Earth's parallax, camera, projection and
-            # depth as one rigid body (real z-buffer occlusion, real perspective).
-            # Worlds may opt out (The Watcher exists alone — no icons).
-            if world.show_icons and not ICONS_OFF_FLAG.exists():
-                icons.draw(dpi_scale)
-        glPopMatrix()
+            bx, by, bz, pf = OBJECTS["earth"]
+            wx = bx + cam_x * pf
+            wy = by + cam_y * pf
+
+            # The Gem floats inside a checkered enclosure box that shares the Grid
+            # Room's dimensions (aperture extents + grid_depth/grid_divisions). The
+            # box is an ENVIRONMENT drawn in WORLD space (front rim on the glass at
+            # z = 0), so it is built + drawn here, BEFORE the Earth-anchor translate.
+            if world.primary_mesh == "gem":
+                if gem is None:
+                    try:
+                        gem = Gem()
+                    except Exception as e:
+                        print(f"[main] The Gem unavailable ({e}); falling back to Earth")
+                        world.select("earth")
+                if gem is not None:
+                    gem.draw_box(hw, hh, world.grid_depth, world.grid_divisions)
+
+            glPushMatrix()
+            glTranslatef(wx, wy, bz)
+            if world.primary_mesh == "eye":
+                # Build the eyeball lazily on first use; if its shader/textures fail
+                # to load, log and fall back to Earth rather than crash the engine.
+                if eye is None:
+                    try:
+                        eye = Eye()
+                    except Exception as e:
+                        print(f"[main] The Watcher unavailable ({e}); falling back to Earth")
+                        world.select("earth")
+                if eye is not None:
+                    eye.draw(sun_eye, t_s)
+                else:
+                    earth.draw(sun_eye, t_s)
+            elif world.primary_mesh == "gem":
+                # The Gem — brilliant-cut rotating gemstone, floating inside the
+                # checkered box drawn above. Built lazily there; if that failed the
+                # world has already been switched to Earth, so gem is non-None here.
+                if gem is not None:
+                    gem.draw(sun_eye, fill_eye, t_s)
+                else:
+                    earth.draw(sun_eye, t_s)
+            else:
+                earth.draw(sun_eye, t_s)
+                # Orbital icons live in EARTH-LOCAL space — drawn inside the very same
+                # transform so they inherit Earth's parallax, camera, projection and
+                # depth as one rigid body (real z-buffer occlusion, real perspective).
+                # Worlds may opt out (The Watcher exists alone — no icons).
+                if world.show_icons and not ICONS_OFF_FLAG.exists():
+                    icons.draw(dpi_scale)
+            glPopMatrix()
+
+        # Opt-in window-frame anchor on the glass (world z = 0). Default OFF, so
+        # the shipped Earth / Watcher / Gem worlds are unchanged; the Grid Room
+        # draws its own rim, so it is excluded here.
+        if world.show_window_frame and world.primary_mesh != "room":
+            draw_window_frame(hw, hh, color=world.grid_color, dpi_scale=dpi_scale)
 
         # (Bloom Pass 2 removed — the scene is already on screen.)
 

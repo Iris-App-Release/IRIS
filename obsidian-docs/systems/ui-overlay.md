@@ -117,8 +117,14 @@ instantly-switched states (never reloaded):
    `scripted_head(t)` — gentle sine-wave motion
    (`hx = 0.14·sin 0.55t`, `hy = 0.07·sin 0.40t`, `hz = 0.06·sin 0.22t`) — into the
    *same* camera variables the tracker would, so the parallax is real and the
-   idle scene looks alive. Status: "Floating preview"; button: **"Enable Camera"**.
-2. **Live tracked** — after "Enable Camera". Real [[head-tracking]] drives the
+   idle scene looks alive. Status: "Floating preview"; button:
+   **"Enable Camera for Desktop Mode"** (the label spells out that the camera is
+   the path to Desktop Mode). This same label shows on first open AND whenever
+   camera access is disabled in Settings; in the latter case clicking it
+   **re-enables camera access first** (`_set_camera_enabled(True)`), otherwise the
+   engine would ignore the request while the `camera_off` flag exists.
+2. **Live tracked** — after "Enable Camera for Desktop Mode". Real
+   [[head-tracking]] drives the
    parallax. The status line is **honest about the transition** (it used to read
    "Live" the instant the button was clicked, even when the camera never opened —
    the "Live status on, no tracking" bug):
@@ -132,9 +138,12 @@ instantly-switched states (never reloaded):
      **"Enable Desktop Mode"**, in the exact same slot/size/style.
    - **"Camera access needed — enable it in System Settings"** if access was denied
      (the engine calls `notify_camera_denied()`); the overlay drops back to the
-     scripted floating preview and the button returns to "Enable Camera" so the
-     user can retry.
+     scripted floating preview and the button returns to "Enable Camera for
+     Desktop Mode" so the user can retry.
    The swap is gated by `_camera_ready()` = `tracking_active or daemon_running`.
+   Disabling the camera again clears `tracking_active`, so the button correctly
+   reverts to the enable-camera label (it used to wrongly stick on "Enable Desktop
+   Mode" — a routing bug, now covered by `sim_overlay`).
 3. **Desktop mode** — once the wallpaper is active, the overlay reverts to a
    passive floating preview and the button becomes "Disable / Enable Desktop
    Mode". Desktop-mode presence is auto-detected via the daemon PID file (or a
@@ -159,15 +168,19 @@ frame:
 
 Everything is keyed to the **tab bar** (top-centre, always visible across all
 three tabs): **Worlds · Community · Settings**. The active tab is a white pill;
-inactive tabs are light-grey text on the dark-grey bar. `self._active_tab` drives
-the whole layout; switching is instant (no reload).
+inactive tabs are light-grey text on the dark-grey bar (with an instant white
+hover highlight). `self._active_tab` drives the whole layout; switching is instant
+(no reload). The tab bar is **drawn last, directly on the output surface — not on
+the idle-faded layer** — so on the Worlds tab it never dims and its hover feedback
+is always crisp (the idle-fade easing previously read as hover lag here).
 
 ### Worlds tab
 
 - **World-name pill** — centred under the tab bar, shows the active world's
   display name.
-- **Navigation arrows** (`world_prev` / `world_next`) — grey rounded ◀ / ▶ at the
-  left and right screen edges, vertically centred. Clicking switches worlds
+- **Navigation arrows** (`world_prev` / `world_next`) — grey rounded ◀ / ▶ with
+  slightly rounded triangle glyphs, vertically centred and **pulled in from the
+  screen edges** (`edge_inset`) to flank the scene. Clicking switches worlds
   **instantly** (no carousel/animation): `_cycle_world()` advances the index and
   writes `"world"` to `~/.iris/preferences.json`, which the engine polls live (no
   restart). They replace the old vertical world-picker pill list. Available until
@@ -180,24 +193,28 @@ the whole layout; switching is instant (no reload).
 
 ### Settings tab
 
-A solid white full-page card exposing a **Camera Access** toggle that
-creates/removes `~/.iris/camera_off` — the same flag the engine and
-[[head-tracking]] respect. Disabling drops the overlay back to floating-preview
-mode (`live = False`). Re-enabling + clicking "Enable Camera" resumes the existing
-tracker worker thread via `set_tracking(True)` without a full re-authorization
-cycle (the worker is paused, not exited, so permissions are preserved). See
-[[known_issues]] for the prior bug where this re-enable was silently blocked.
+A **full-bleed blank white page** (no inset card / dark frame — the white fills
+the whole window, the tab bar floats on top) exposing a **Camera Access** toggle
+that creates/removes `~/.iris/camera_off` — the same flag the engine and
+[[head-tracking]] respect. The toggle sits on its own grey container so it reads
+on the white. Disabling drops the overlay back to floating-preview mode
+(`live = False`). Re-enabling + clicking "Enable Camera for Desktop Mode" resumes
+the existing tracker worker thread via `set_tracking(True)` without a full
+re-authorization cycle (the worker is paused, not exited, so permissions are
+preserved). See [[known_issues]] for the prior bug where this re-enable was
+silently blocked.
 
 ### Community tab
 
-A solid white full-page card — "Coming Soon" placeholder.
+A **full-bleed blank white page** — "Coming Soon" placeholder.
 
 ### Idle fade & toasts
 
 **Toasts** float just above the bottom action group (Worlds) or near the bottom
 edge (other tabs). The **idle fade** (the HUD dims to ~34% after 4 s of no input)
-applies **only on the Worlds tab** — the full-page Settings/Community cards stay
-at full opacity, since fading a solid card would reveal the dark scene through it.
+applies **only on the Worlds tab** — the full-page Settings/Community pages stay
+at full opacity, since fading a solid white page would reveal the dark scene
+through it.
 The idle timer treats an **active hover as engagement** — while the cursor rests
 on any control, `idle` is held at 0 so the HUD stays fully lit (a stationary mouse
 emits no `MOUSEMOTION`, so without this a held hover used to dim the whole layer
@@ -206,7 +223,7 @@ after 4 s — see [[known_issues]]).
 ## World-preview suspend
 
 The live 3-D scene is **only rendered while the Worlds tab is showing**. On the
-Settings/Community tabs the scene is fully hidden behind the solid card, so
+Settings/Community tabs the scene is fully hidden behind the blank white page, so
 rendering it is wasted GPU. Each frame [[engine-loop-and-daemon]] reads
 `overlay.preview_active`; in `demo` mode (and not yet desktop-active) it skips the
 entire scene draw — clears to a **fixed neutral dark** (`0.05, 0.05, 0.06`, *not*

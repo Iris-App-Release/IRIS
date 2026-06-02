@@ -1,8 +1,8 @@
 ---
 title: The Gem (World)
 type: world
-related: [world-system, rendering-engine, off-axis-projection, head-tracking, worlds-index, design-decisions, constraints]
-last_updated: 2026-06-01
+related: [world-system, rendering-engine, off-axis-projection, head-tracking, worlds-index, grid-room, design-decisions, constraints]
+last_updated: 2026-06-02
 sources: [Worlds/gem/world.json, Engine/renderer.py, shaders/gem.vert, shaders/gem.frag, Launcher/app_engine.py]
 ---
 
@@ -10,9 +10,9 @@ sources: [Worlds/gem/world.json, Engine/renderer.py, shaders/gem.vert, shaders/g
 
 ## What it is
 
-> *"A brilliant hot-pink gemstone suspended in pure white space, rotating endlessly as light dances across its facets."*
+> *"A brilliant hot-pink gemstone floating inside a pink-and-white checkered box, rotating endlessly as light dances across its facets."*
 
-The Gem is IRIS's third world: a physically consistent brilliant-cut gemstone rotating in pure white space, with no distractions — just the gem and the light. It is a demonstration of the renderer's faceted geometry, per-facet flat shading, and multi-light specular physics. Moving your head shifts your view of the gem through the window parallax exactly as the Earth world shifts the globe.
+The Gem is IRIS's third world: a physically consistent brilliant-cut gemstone floating inside a **pink-and-white checkered enclosure box**, with no distractions — just the gem, the checker room, and the light. (As of 2026-06-02 the old single flat checkered floor was promoted to a full box.) It is a demonstration of the renderer's faceted geometry, per-facet flat shading, and multi-light specular physics. Moving your head shifts your view of the gem — and the receding checker walls — through the window parallax exactly as the Earth world shifts the globe; the box's converging checks are a strong fish-tank depth cue.
 
 It is intentionally **not** a visual reskin of an existing mesh: it uses the `Gem` renderer class, distinct from `Earth` and `Eye`, with its own flat-shaded facet geometry and dedicated `gem` shader.
 
@@ -29,7 +29,9 @@ It is intentionally **not** a visual reskin of an existing mesh: it uses the `Ge
 | `use_bloom` | `false` |
 | `use_parallax` | `true` |
 | `show_icons` | `false` |
-| `clear_color` | `[1.0, 1.0, 1.0]` (pure white) |
+| `grid_depth` | `18.0` (box depth into the screen — matches [[grid-room]]) |
+| `grid_divisions` | `8` (grid cells per face edge = checks per face edge) |
+| `clear_color` | `[1.0, 1.0, 1.0]` (pure white; only shows if the box doesn't fill the frustum, which it does) |
 
 **Bloom is off — and as of 2026-06-01 it is off everywhere** (bloom was removed engine-wide; the `use_bloom: false` flag is now moot but still correctly describes the result). This always suited the gem: the old bloom composite's vignette (`VIGNETTE = 0.42`) would have darkened the white background edges into an ugly ring, and the gem's sharp facet specular (`shininess = 256`) delivers diamond-flash brilliance that bloom would only soften. Note: `sky` is used as the background type, which renders nothing (the white clear color is the scene).
 
@@ -39,7 +41,9 @@ The `Gem` class draws a single brilliant-cut faceted mesh built by `make_gem(n=1
 
 **Rotation:** Two independent axes. The Y-axis spins continuously at 22°/s. The X-axis tilt **oscillates sinusoidally** between −25° and +25° (period ≈ 16.5 s, rate 0.38 rad/s), so the gem never approaches sideways and always stays close to upright. Both are applied as `glRotatef` calls inside `Gem.draw()`. As the gem spins, each facet's eye-space normal changes relative to the fixed sun and fill lights in world space, producing the continuously shifting highlights that make the gem feel physically alive.
 
-**Shadow:** A flat soft-edged disk drawn directly below the gem in its position-translate space (before the gem's own rotation push), so it stays horizontal on the "floor" regardless of how the gem is tilting. The disk is centred at y = −3.30 (0.50 below the culet tip at −2.80), radius 3.50 (wider than the gem equator). It is a 48-segment triangle-fan with vertex colours: centre is `(0, 0, 0, 0.28)` fading to fully transparent at the edge. Drawn with depth writes off so the gem correctly renders over it; the result is a soft oval shadow that grounds the gem in the white space and reinforces the parallax depth illusion.
+**Checkered enclosure box:** The gem floats inside a five-face room (floor, ceiling, back wall, left/right walls — the front is the viewing glass) drawn in WORLD space by `Gem.draw_box(half_w, half_h, depth, divisions)`, *before* the Earth-anchor translate, exactly like [[grid-room]]. The box shares the Grid Room's dimensions: width/height are the live aperture half-extents (`half_w = WINDOW_HALF_H·aspect ≈ 11.33` at 16:9, `half_h ≈ 6.375`), depth = `grid_depth` (18), with `grid_divisions` (8) grid cells per face edge. The front rim sits on the glass at z = 0; the back wall at z = −18. Each face is a textured quad whose UVs run `0..(divisions / 8)`, so the **8×8 pink/white `GL_REPEAT` checker** lays down exactly `divisions` checks across the `divisions` cells of every face → **one checker square per grid cell** (`_build_box_mesh`). The checks are stretched to each face's cell aspect: ≈2.83 (X) × 2.25 (Z) on the floor/ceiling, ≈2.83 (X) × 1.59 (Y) on the back wall, ≈2.25 (Z) × 1.59 (Y) on the side walls. The box mesh is rebuilt + cached on a `(half_w, half_h, depth, divisions)` key, so it is regenerated only when the aperture or grid changes — never per frame. Faces are flat, unlit fixed-function quads with `GL_CULL_FACE` off (interior faces always visible).
+
+**Shadow:** A flat soft-edged disk drawn by `draw_box` onto the checker floor (`y = −half_h`), directly beneath the gem anchor (`z = −10`). Radius 3.50, a 48-segment triangle-fan with vertex colours fading centre `(0, 0, 0, 0.28)` → transparent edge, depth writes off. It grounds the floating gem on the checker floor and reinforces the parallax depth illusion. (Before 2026-06-02 the disk sat at a fixed `y = −3.30` over an infinite flat floor; it now rides the actual box floor.)
 
 **Lighting model (`gem.frag`, GLSL 120):**
 
@@ -56,7 +60,7 @@ The `Gem` class draws a single brilliant-cut faceted mesh built by `make_gem(n=1
 
 ## Minimal assets
 
-Unlike Earth (five textures) and The Watcher (three procedural textures), The Gem is nearly entirely procedural. `make_gem()` generates all geometry at startup; the `gem` shader handles all colour, lighting, and emissive — the only texture asset is `floor_checkered.png`, a simple checkered pattern used for the soft drop shadow disk that grounds the gem in the white space.
+Unlike Earth (five textures) and The Watcher (three procedural textures), The Gem is **fully** procedural — no texture files are loaded. `make_gem()` generates the gem geometry at startup; the `gem` shader handles all colour, lighting and emissive; the pink/white checker for the enclosure box is generated in-memory at construction (`_build_checker_texture`, an 8×8 `GL_REPEAT` checkerboard, pink `(255,182,193)` / white `(255,255,255)`); and the grounding shadow disk uses vertex-colour alpha (no texture). The old `floor_texture: "floor_checkered.png"` world-JSON key was removed — it was already unused.
 
 ## Constraints & tradeoffs
 
@@ -64,8 +68,10 @@ Unlike Earth (five textures) and The Watcher (three procedural textures), The Ge
 - **Flat shading** → sharp facet edges, no smooth interpolation. This is intentional: each flat-shaded facet has a constant normal, so the specular either fires or doesn't — producing the distinct, count-able flashes of a real cut gemstone.
 - **n=16, 64 triangles** → 16-sided girdle, visually distinct facets without feeling busy. Higher n (32 was tried) makes the gem feel overwhelming and reduces per-facet legibility; n=16 balances facet count against clarity.
 - **Sinusoidal tilt ±25°** → gem never goes sideways. A continuously accumulating X-axis rotation was rejected because it eventually tilts the gem 90° and breaks the "upright jewel" read. The oscillating tilt rocks the gem gently while keeping it recognisably vertical.
-- **Shadow drawn before rotation** → the shadow disk is always flat regardless of how the gem tilts. Physically a simplification, but reads correctly as a grounding shadow and avoids the complexity of a projected shadow that would need to track the tilt angle.
-- **GL 2.1 / GLSL 120** constraint applies. The gem shader uses only varying/uniform/built-in matrix conventions from GLSL 120; the shadow uses the fixed-function pipeline with vertex colour arrays (no shader needed).
+- **One check per grid cell** → the checker IS the grid. UVs are mapped per face as `divisions / 8` so the 8×8 texture gives `divisions` checks across `divisions` cells. With `divisions = 8`, every face maps the texture UV 0..1 exactly once (perfectly aligned, seamless). Checks are intentionally rectangular (matching the non-square cells), not forced square — that is what "fits one grid square" means here.
+- **Box drawn in world space (not anchored)** → like [[grid-room]], `draw_box` runs before the Earth-anchor translate so the front rim lands on the glass at z = 0. The gem itself still rides the z = −10 anchor and floats inside. Coupling: `_GEM_ANCHOR_Z = −10` in `Gem` must match `OBJECTS["earth"]` in `app_engine.py`.
+- **Shadow flat on the floor** → the grounding disk is drawn (depth-writes off) on the box floor beneath the gem, always horizontal regardless of gem tilt. Physically a simplification, but reads correctly and avoids a projected shadow that would need to track the tilt angle.
+- **GL 2.1 / GLSL 120** constraint applies. The gem shader uses only varying/uniform/built-in matrix conventions from GLSL 120; the box faces and shadow use the fixed-function pipeline (textured quads / vertex-colour arrays — no shader needed).
 
 ## Integration with head tracking and projection
 
