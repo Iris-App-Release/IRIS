@@ -2,7 +2,7 @@
 title: UI Overlay (Demo HUD)
 type: system
 related: [engine-loop-and-daemon, head-tracking, world-system, headless-simulation, asset-pipeline, distribution-checklist]
-last_updated: 2026-06-01
+last_updated: 2026-06-03
 fixed: [font-fallback-bitmap, retina-best-res-surface, aa-rounded-corners, idle-fade-respects-hover, instant-hover-no-easing]
 sources: [UI/demo_overlay.py, Launcher/app_engine.py, Config/Strings.json, Docs/preview/]
 ---
@@ -13,20 +13,25 @@ sources: [UI/demo_overlay.py, Launcher/app_engine.py, Config/Strings.json, Docs/
 
 The UI overlay *is* the onboarding experience. IRIS never shows a landing page or
 a loading screen — the live world is always rendering behind the HUD. The UI is
-organised as a **three-tab app** (Worlds · Community · Settings) sitting over the
-scene. On the **Worlds** tab the design rule still holds — **the illusion is the
-product**: the controls are understated white pills and the HUD idle-fades so the
-world stays the star. The **Community** and **Settings** tabs are solid full-page
-cards; while they are showing, the live 3-D preview is suspended (see
-*World-preview suspend* below).
+organised as a **four-tab app** (Worlds · World Builder · Community · Settings)
+sitting over the scene. On the **Worlds** tab the design rule still holds — **the
+illusion is the product**: the controls are understated pills and the HUD
+idle-fades so the world stays the star. The **Community** and **Settings** tabs
+are solid full-page cards; the **World Builder** tab is a full white page with a
+2-D grid canvas (its *Preview* sub-view re-renders the live grid world). While a
+full-page tab is showing the live 3-D preview is suspended unless it is the World
+Builder *Preview* (see *World-preview suspend* below).
 
 It runs only in `demo` window mode and is composited each frame by
 [[engine-loop-and-daemon]]. The file is `UI/demo_overlay.py`.
 
-The visual language: **solid white rounded pills with crisp black text, sitting on
-darkened-grey rounded containers**, with a soft instant drop shadow on hover.
-Corner radii are iPhone-style (`_BTN_CORNER` / `_PANEL_CORNER` / `_TABBAR_CORNER`)
-and are considered dialed-in — do not change them.
+The visual language (refit 2026-06-03 to **grayscale-minimal** — see *Button
+styling*): controls render through the shared `Button` primitive in
+`UI/buttons.py`, sitting on opaque mid-grey rounded containers, with an instant
+drop shadow on hover. The lone chromatic accent is the World Builder canvas's
+premium golden-yellow side panels. Corner radii (`_BTN_CORNER` / `_PANEL_CORNER`
+/ `_TABBAR_CORNER`) are dialed-in; the Button primitive itself uses a 7.2 px
+radius.
 
 ## Retina / HiDPI rendering
 
@@ -86,23 +91,30 @@ correct.
 > design request that overrode the previously-frozen white-pill language and
 > iPhone radii.
 
-Mapping of the HUD's controls onto the new variants (all via `_draw_btn`, which
-feeds each Button the overlay's existing instant-hover state so hit-testing and
-look stay in lock-step):
+The palette was **de-blued to neutral near-black `#252525`** (the bluish
+`#363D52`/`#454F66` tones were dropped). Mapping of the HUD's controls (all via
+`_draw_btn`, which feeds each Button the overlay's existing instant-hover state so
+hit-testing and look stay in lock-step):
 
 | Control | Variant · palette |
 |---|---|
-| Active tab, world-name chip, bottom action pill, "Preview" | `primary` |
-| Inactive tabs, camera toggle (**Off**) | `secondary` (outlined) |
-| Nav arrows, "Back to Grid" | `muted` (solid, legible over the scene) |
-| Camera toggle (**On**) | `primary` (filled — On/Off = emphasis) |
+| **Occupied** tab | `primary` light → **black** fill, white text |
+| **Inactive** tabs | `primary` dark → **white** fill, black text |
+| Bottom action pill, "Preview", "Back to Canvas" | `primary` dark (white pill) |
+| Nav arrows | `muted` dark (solid near-black) + hand-drawn glyph |
+| Camera toggle — **On** / **Off** | `primary` (filled) / `secondary` (outlined) |
 
-The PRIMARY look in the **dark** palette is a light fill (#EBEBEB) with dark text
-— i.e. it reads like the old white pill, so the over-scene legibility is kept.
-The grey containers (`GREY_CONTAINER`) survive as **structural backings** behind
-the tab bar / action group / toast, because they keep labels legible over an
-arbitrary live scene; they are not buttons. Nav-arrow triangle glyphs and the WB
-chevrons are still drawn by hand on top of a Button (the font lacks ◀▶→←).
+The tab scheme is **inverted**: the occupied tab is a black pill (white text) and
+the others are white pills (black text), on a **lighter opaque mid-grey** bar
+(`GREY_CONTAINER` = `(80,82,90)`). Those grey containers survive as **structural
+backings** behind the tab bar / action group / toast / Preview button, keeping
+labels legible over an arbitrary live scene; they are not buttons. There is no
+world-name pill anymore — the active world is announced only by a toast.
+
+> 🟡 **World Builder canvas accent.** The grid canvas adds two big premium
+> **golden-yellow** side panels (`PREMIUM_GOLD` `#ECA31E`, the user's supplied
+> swatch) with a border a few shades darker (`PREMIUM_GOLD_BORDER`) and bold navy
+> titles. This is the *only* non-grayscale surface in the HUD.
 
 > ⚡ **Hover is INSTANT — no easing.** `hover_t` is binary (0/1), set the moment
 > the pointer enters/leaves the hit area (`update()`), so the grey-fill + shadow
@@ -179,29 +191,34 @@ frame:
 | `live` | User intent: floating preview (False) vs. camera enabled (True) |
 | `tracking_active` | The engine calls `notify_tracking_active()` once real head data arrives → status promotes to "Live · head tracking on" AND the bottom button swaps to Desktop Mode |
 | `camera_denied` | The engine calls `notify_camera_denied()` when authorization was denied/unavailable → status shows the System-Settings hint and reverts to the scripted preview |
-| `preview_active` *(property)* | `True` only on the **Worlds** tab. The engine renders the live 3-D scene only when this is `True`; on Settings/Community it skips the whole scene draw (see *World-preview suspend*) |
+| `preview_active` *(property)* | `True` on the **Worlds** tab **and** in the World Builder **Preview** sub-view. The engine renders the live 3-D scene only when this is `True`; on Settings/Community and the WB grid editor it skips the whole scene draw (see *World-preview suspend*) |
 
 ## Controls
 
-Everything is keyed to the **tab bar** (top-centre, always visible across all
-three tabs): **Worlds · Community · Settings**. The active tab is a white pill;
-inactive tabs are light-grey text on the dark-grey bar (with an instant white
-hover highlight). `self._active_tab` drives the whole layout; switching is instant
-(no reload). The tab bar is **drawn last, directly on the output surface — not on
-the idle-faded layer** — so on the Worlds tab it never dims and its hover feedback
-is always crisp (the idle-fade easing previously read as hover lag here).
+Everything is keyed to the **tab bar** (top-centre, always visible across all four
+tabs): **Worlds · World Builder · Community · Settings**. The scheme is inverted —
+the **occupied tab is a black pill** (white text); the rest are **white pills**
+(black text) on the lighter opaque grey bar, each with an instant hover highlight.
+`self._active_tab` drives the whole layout; switching is instant (no reload). The
+tab bar is **drawn last, directly on the output surface — not on the idle-faded
+layer** — so on the Worlds tab it never dims and its hover feedback is always crisp
+(the idle-fade easing previously read as hover lag here).
 
 ### Worlds tab
 
-- **World-name pill** — centred under the tab bar, shows the active world's
-  display name.
-- **Navigation arrows** (`world_prev` / `world_next`) — grey rounded ◀ / ▶ with
+- **No world-name pill** — the active world is announced only by a transient
+  toast on switch (the under-tab title pill was removed).
+- **Navigation arrows** (`world_prev` / `world_next`) — near-black rounded ◀ / ▶ with
   slightly rounded triangle glyphs, vertically centred and **pulled in from the
   screen edges** (`edge_inset`) to flank the scene. Clicking switches worlds
   **instantly** (no carousel/animation): `_cycle_world()` advances the index and
   writes `"world"` to `~/.iris/preferences.json`, which the engine polls live (no
   restart). They replace the old vertical world-picker pill list. Available until
-  Desktop Mode is active (the HUD hides entirely once it is).
+  Desktop Mode is active (the HUD hides entirely once it is). The cycle uses
+  `self._world_keys`, which **excludes `grid_room`** (the World Builder's working
+  world) — `grid_room` stays in `self._all_world_keys` for `_set_world` validity
+  but is never a browsable world, and a saved `world == grid_room` pref is reset to
+  `earth` on init.
 - **Bottom action group** — a grey container centred at the bottom holding a
   **status line** (`_status_text()`) above the **single large action pill**
   (Enable Camera → Desktop Mode, per the state machine). This is the one home for
@@ -221,6 +238,31 @@ re-authorization cycle (the worker is paused, not exited, so permissions are
 preserved). See [[known_issues]] for the prior bug where this re-enable was
 silently blocked.
 
+### World Builder tab
+
+A **full white page** with two sub-views of the one `grid_room` world (`_wb_view`
+= `"grid"` | `"preview"`); switching never edits the world, so state persists.
+
+- **Grid editor** (`grid`) — a 2-D **30° oblique** drawing of the room: a true
+  N×N back-wall grid with the depth axis receding down-left. Addressed by
+  *square*, not point — **X** across the bottom row, **Y** up the left column
+  (both share square 1), **Z** mapped to the **bottom row of the left wall**. The
+  back-wall border plus the **left-wall and floor perimeters** are drawn in the
+  same dark shade (`WALL`); the Z numbers match that shade. The cube fits **as
+  tightly between the side panels as the tab bar** (same 16 px side gap, ~0.99
+  fill).
+- **Premium side panels** — two big **golden-yellow** cards flank the cube
+  (`self._wb_left_panel` / `self._wb_right_panel`), tops aligned with the tab-bar
+  row and a symmetric bottom inset. Left = the World-Builder explainer (to come),
+  right = build settings. Bold navy titles. The **Preview** button (white pill on
+  grey, key `wb_preview`) sits on the tab-bar row sized to the right panel, with
+  the right panel directly under it.
+- **Preview** (`preview`) — transparent over the live off-axis render of
+  `grid_room` (`preview_active` True). A detached grey **"Back to Canvas"** tab
+  pill (`wb_back`) floats top-left so the user can iterate without losing work.
+
+`grid_room` is kept **blank (no placeable meshes)** as a clean canvas preview.
+
 ### Community tab
 
 A **full-bleed blank white page** — "Coming Soon" placeholder.
@@ -239,14 +281,15 @@ after 4 s — see [[known_issues]]).
 
 ## World-preview suspend
 
-The live 3-D scene is **only rendered while the Worlds tab is showing**. On the
-Settings/Community tabs the scene is fully hidden behind the blank white page, so
-rendering it is wasted GPU. Each frame [[engine-loop-and-daemon]] reads
+The live 3-D scene is rendered **only while `preview_active` is True** — the
+Worlds tab **and** the World Builder *Preview* sub-view. On the Settings/Community
+tabs and the WB grid editor the scene is fully hidden behind the blank white page,
+so rendering it is wasted GPU. Each frame [[engine-loop-and-daemon]] reads
 `overlay.preview_active`; in `demo` mode (and not yet desktop-active) it skips the
 entire scene draw — clears to a **fixed neutral dark** (`0.05, 0.05, 0.06`, *not*
 `world.clear_color`, because the Gem world clears to white and would hide the
-card), composites just the HUD, and continues. The preview restores the instant
-the Worlds tab is reselected. Never applies once Desktop Mode is active — the
+card), composites just the HUD, and continues. The preview restores the instant a
+preview-active view is reselected. Never applies once Desktop Mode is active — the
 wallpaper must keep rendering.
 
 ## Cross-process state it owns

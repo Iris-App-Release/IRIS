@@ -103,11 +103,20 @@ BTN_FILL_REST  = (255, 255, 255, 255)   # full-bleed white page fill + toast pil
 
 # Grey rounded container that sits BEHIND controls for depth / legibility over
 # the live scene. One grey, used everywhere — the tab bar, the bottom action
-# group, the toast — so the language stays consistent.
-GREY_CONTAINER   = (40, 40, 45, 205)
+# group, the toast — so the language stays consistent. Fully OPAQUE so the white
+# pills' drop shadows pop against a consistent backdrop instead of being lost in
+# the live world showing through. A lighter mid-grey (the dark shade was dropped).
+GREY_CONTAINER   = (80, 82, 90, 255)
 GREY_TEXT        = (200, 200, 205)      # light label text drawn on the grey
 GREY_TEXT_DIM    = (150, 150, 156)
 ARROW_GLYPH      = (240, 240, 245)      # nav-arrow triangle, drawn over the pill
+
+# Premium golden-yellow accent — used ONLY by the World Builder canvas side
+# panels (everything else stays grayscale). The fill is the exact swatch the
+# user supplied (Nippon "golden yellow", #ECA31E).
+PREMIUM_GOLD        = (236, 163, 30)    # supplied golden yellow (#ECA31E) — panel fill
+PREMIUM_GOLD_BORDER = (170, 117, 22)    # a few shades darker — panel border
+PREMIUM_NAVY        = (23, 32, 58)      # deep navy — bold panel titles
 
 T_TITLE        = (255, 255, 255)
 T_BODY         = (255, 255, 255)
@@ -240,8 +249,14 @@ class DemoOverlay:
         # between them never edits the world, so all state persists for free.
         self._wb_view = "grid"            # "grid" | "preview"
         self._wb_prev_world = None        # world to restore when leaving the tab
-        self._world_keys, self._world_names = self._load_worlds()
+        # grid_room is the World Builder's working world — keep it loadable but
+        # OUT of the Worlds-tab cycle (it's a blank canvas preview, not a world).
+        self._all_world_keys, self._world_names = self._load_worlds()
+        self._world_keys = [k for k in self._all_world_keys
+                            if k != "grid_room"] or ["earth"]
         self.active_world = str(self._pref("world", "earth"))
+        if self.active_world == "grid_room":
+            self.active_world = "earth"   # never persist the canvas world here
 
         # Camera-access control. Flag file is the live cross-process source of
         # truth the engine polls; persists across restarts.
@@ -485,10 +500,12 @@ class DemoOverlay:
         S = self.s
         w, h = self.w, self.h
         self._buttons = {}
-        # Detached tab-style mini-bars for the World Builder nav controls (set in
-        # the world_builder branch below; None when not on that tab).
-        self._wb_preview_bar = None
+        # World Builder canvas furniture (set in the world_builder branch below;
+        # None when not on that tab). The grid view uses two premium side panels;
+        # the preview view keeps the detached "Back to Canvas" mini-bar.
         self._wb_back_bar = None
+        self._wb_left_panel = None
+        self._wb_right_panel = None
         pad = int(16 * S)
         btn_gap = int(8 * S)
 
@@ -510,10 +527,6 @@ class DemoOverlay:
 
         # ── Worlds tab ────────────────────────────────────────────────────────
         if self._active_tab == "worlds":
-            # World-name pill — centred just below the tab bar (width measured at
-            # render time from the active world's display name).
-            self._worldname_cy = self._tabbar.bottom + int(28 * S)
-
             # World navigation arrows — flanking the scene, pulled in from the
             # edges toward the centre. They switch worlds instantly (no carousel)
             # and stay until Desktop Mode is active (the whole HUD hides then).
@@ -544,7 +557,6 @@ class DemoOverlay:
 
         # ── Settings / Community tabs ──────────────────────────────────────────
         else:
-            self._worldname_cy = None
             self._action_group = None
             self._status_rect  = None
 
@@ -567,20 +579,33 @@ class DemoOverlay:
                 mb_pad = tb_pad
                 mb_h = tab_h
                 if self._wb_view == "grid":
-                    # Preview — parallel to the tab bar, detached to the RIGHT.
-                    pill_w = int(120 * S)
-                    bar_x = self._tabbar.right + int(12 * S)
-                    self._wb_preview_bar = pygame.Rect(
-                        bar_x, self._tabbar.y, pill_w + mb_pad * 2, mb_h + mb_pad * 2)
-                    self._buttons["wb_preview"] = pygame.Rect(
-                        bar_x + mb_pad, self._tabbar.y + mb_pad, pill_w, mb_h)
+                    # Two big premium side panels flank the cube. Top aligned with
+                    # the tab-bar row; bottom the same inset from the bottom as the
+                    # tabs are from the top (symmetric). Each fills its side gap
+                    # beside the tab bar.
+                    top = self._tabbar.y
+                    bottom = h - self._tabbar.y
+                    edge = int(40 * S)
+                    gap = int(16 * S)
+                    # Left panel — full height of the zone (no button above it).
+                    lx0, lx1 = edge, self._tabbar.left - gap
+                    self._wb_left_panel = pygame.Rect(lx0, top, lx1 - lx0, bottom - top)
+                    # Right column — Preview button on the tab-bar row, the right
+                    # panel directly UNDER it (button sized to fit the panel width).
+                    rx0, rx1 = self._tabbar.right + gap, w - edge
+                    btn_h = self._tabbar.h
+                    self._buttons["wb_preview"] = pygame.Rect(rx0, top, rx1 - rx0, btn_h)
+                    pgap = int(12 * S)
+                    self._wb_right_panel = pygame.Rect(
+                        rx0, top + btn_h + pgap, rx1 - rx0, bottom - (top + btn_h + pgap))
                 else:
-                    # Back to Canvas — top-LEFT, roughly where it was, aligned to
-                    # the tab-bar row.
+                    # Back to Canvas — centred in the gap between the window's left
+                    # edge and the tab bar's left edge, on the tab-bar row.
                     pill_w = int(150 * S)
-                    bar_x = int(24 * S)
+                    bar_w = pill_w + mb_pad * 2
+                    bar_x = int(self._tabbar.left / 2 - bar_w / 2)
                     self._wb_back_bar = pygame.Rect(
-                        bar_x, self._tabbar.y, pill_w + mb_pad * 2, mb_h + mb_pad * 2)
+                        bar_x, self._tabbar.y, bar_w, mb_h + mb_pad * 2)
                     self._buttons["wb_back"] = pygame.Rect(
                         bar_x + mb_pad, self._tabbar.y + mb_pad, pill_w, mb_h)
 
@@ -672,7 +697,7 @@ class DemoOverlay:
     def _set_world(self, name: str) -> None:
         """Make `name` the active world (engine hot-swaps from the saved pref next
         frame). No-op if it is already active or not a known world."""
-        if name == self.active_world or name not in (self._world_keys or []):
+        if name == self.active_world or name not in (self._all_world_keys or []):
             return
         self.active_world = name
         self._save_pref("world", name)
@@ -775,17 +800,8 @@ class DemoOverlay:
 
         # ── Worlds tab — nav arrows, world-name pill, bottom action group ─────
         if self._active_tab == "worlds":
-            # World-name chip — a static light pill (primary look in the dark
-            # palette → light fill, dark text) so the active world stays legible
-            # over any scene. Non-interactive (no hover key).
-            wname = self._world_names.get(self.active_world, self.active_world)
-            tw = self.fnt_btn.size(wname)[0]
-            pill_w = tw + int(44 * S)
-            pill_h = int(40 * S)
-            name_pill = pygame.Rect(cx - pill_w // 2,
-                                    self._worldname_cy - pill_h // 2,
-                                    pill_w, pill_h)
-            self._draw_btn(layer, name_pill, wname, "primary", "lg", dark=True)
+            # (No world-name title pill — the active world is announced only by
+            # the quick toast above the bottom action group on switch.)
 
             # Navigation arrows — muted solid pills (legible over the scene) with
             # the triangle glyph drawn on top.
@@ -828,16 +844,37 @@ class DemoOverlay:
         # ── World Builder tab — grid editor / live preview ────────────────────
         elif self._active_tab == "world_builder":
             if self._wb_view == "grid":
-                # Grid editor: the world (the big labeled box) dominates a white
-                # page; the Preview control sits on the tab-bar row (detached,
-                # right) as a grey mini-bar holding a white tab-style pill.
+                # Grid editor: a white page with the cube centred between two big
+                # premium (navy/gold) side panels. The cube is drawn first so the
+                # panels cleanly occlude any receding overflow at their edges.
                 layer.fill(BTN_FILL_REST)                   # full-bleed blank white
                 self._draw_builder_canvas(layer, S)
+
+                # Premium side panels (golden-yellow fill, with a border a few
+                # shades darker than the fill — drawn as an inflated underlay, at
+                # double the previous thickness). Placeholders for the World-Builder
+                # explainer (left) and build settings (right) to come.
+                pcorner = int(_PANEL_CORNER * S)
+                border = int(8 * S)            # doubled (was 4*S)
+                for panel, title in ((self._wb_left_panel, "World Builder"),
+                                     (self._wb_right_panel, "Build Settings")):
+                    if not panel:
+                        continue
+                    _aa_round_rect(layer, panel.inflate(border, border),
+                                   PREMIUM_GOLD_BORDER, pcorner + border // 2)
+                    _aa_round_rect(layer, panel, PREMIUM_GOLD, pcorner)
+                    # Bold navy title near the top.
+                    _text_shadow(layer, title, self.fnt_btn, PREMIUM_NAVY,
+                                 (panel.centerx, panel.top + int(34 * S)), S)
+
+                # Preview button — reverted to the white tab pill on a grey
+                # container (sized to the right panel, sitting above it).
                 if "wb_preview" in self._buttons:
-                    _aa_round_rect(layer, self._wb_preview_bar, GREY_CONTAINER,
-                                   int(_TABBAR_CORNER * S))
-                    self._draw_btn(layer, self._buttons["wb_preview"], "Preview",
-                                   "primary", "sm", dark=True, key="wb_preview")
+                    r = self._buttons["wb_preview"]
+                    _aa_round_rect(layer, r, GREY_CONTAINER, int(_TABBAR_CORNER * S))
+                    inner = r.inflate(-int(12 * S), -int(12 * S))
+                    self._draw_btn(layer, inner, "Preview", "primary", "sm",
+                                   dark=True, key="wb_preview")
             else:
                 # Live preview: transparent over the real off-axis 3-D render
                 # (preview_active drives the engine). "Back to Canvas" sits on the
@@ -918,20 +955,24 @@ class DemoOverlay:
         ca, sa = math.cos(ANG), math.sin(ANG)       # exact 30° oblique direction
         dr = 0.55                                   # depth foreshortening (cabinet-ish)
 
-        # Available builder area: below the tab bar, above the "Preview →" pill.
-        pad = int(72 * S)
-        top = (self._content_top or int(120 * S)) + int(14 * S)
-        # Preview now lives on the tab-bar row (not the bottom edge), so the
-        # canvas gets the full page height down to a bottom margin.
-        bottom = self.h - int(60 * S)
-        region_w, region_h = self.w - pad * 2, max(int(80 * S), bottom - top)
-        rcx, rcy = self.w / 2, (top + bottom) / 2
+        # Available builder area: the gap BETWEEN the two premium side panels,
+        # below the tab bar. The cube is centred in this central column and fits
+        # as tightly to the panels as the tab bar does (same 16px side gap).
+        inner = int(16 * S)
+        lp, rp = self._wb_left_panel, self._wb_right_panel
+        region_left  = (lp.right if lp else int(72 * S)) + inner
+        region_right = (rp.left if rp else self.w - int(72 * S)) - inner
+        top = self._tabbar.bottom + int(34 * S)
+        bottom = self.h - self._tabbar.y - int(24 * S)
+        region_w = max(int(120 * S), region_right - region_left)
+        region_h = max(int(80 * S), bottom - top)
+        rcx, rcy = (region_left + region_right) / 2, (top + bottom) / 2
 
         # Fit: figure spans D + D·dr·cos30 wide and D + D·dr·sin30 tall (in cell
         # units u). Solve u so the figure fills ~86 % of the area, then centre it.
         fig_w = D * (1 + dr * ca)
         fig_h = D * (1 + dr * sa)
-        u = min(0.86 * region_w / fig_w, 0.86 * region_h / fig_h)
+        u = min(0.99 * region_w / fig_w, 0.99 * region_h / fig_h)
         v = dr * u                                  # depth-cell length on screen
         # Origin = back-bottom-left corner; centre the figure's bounding box.
         ox = rcx - (D * u - D * v * ca) / 2.0
@@ -941,7 +982,7 @@ class DemoOverlay:
             return (int(ox + gx * u - gz * v * ca),
                     int(oy - gy * u + gz * v * sa))
 
-        GRID = (211, 213, 220)                      # faint interior grid lines
+        GRID = (150, 153, 163)                      # darkened interior grid lines
         EDGE = (120, 123, 132)                      # receding edges + front frame
         WALL = (20, 20, 26)                         # back-wall border (the focus)
         TICK = (38, 38, 46)                         # X / Y square numbers
@@ -975,6 +1016,13 @@ class DemoOverlay:
         pygame.draw.lines(layer, WALL, True,
                           [P(0, 0, 0), P(D, 0, 0), P(D, D, 0), P(0, D, 0)],
                           max(2, int(2 * S)))
+        # Left-wall + floor perimeters — darkened to the SAME back-wall shade so
+        # all three visible faces share a consistent dark outline.
+        wlw = max(2, int(2 * S))
+        pygame.draw.lines(layer, WALL, True,
+                          [P(0, 0, 0), P(0, D, 0), P(0, D, D), P(0, 0, D)], wlw)
+        pygame.draw.lines(layer, WALL, True,
+                          [P(0, 0, 0), P(D, 0, 0), P(D, 0, D), P(0, 0, D)], wlw)
 
         # ── Dimensions, centred INSIDE the squares (1..D), sharing square 1 ─────
         # X (width): centred in each bottom-row square. Square c spans points
@@ -985,9 +1033,11 @@ class DemoOverlay:
         # square already carries the shared "1".
         for r in range(2, D + 1):
             _text_shadow(layer, str(r), self.fnt_small, TICK, P(0.5, r - 0.5, 0), S)
-        # Depth: centred in the floor's left-edge squares, running down-left.
+        # Depth (z): mapped to the BOTTOM ROW of the LEFT wall (gx = 0), centred
+        # in each bottom-row square, receding down-left along the wall. Drawn as
+        # dark as the back-wall border (WALL), not the old subtle grey.
         for d in range(1, D + 1):
-            _text_shadow(layer, str(d), self.fnt_small, DEEP, P(0.5, 0, d - 0.5), S)
+            _text_shadow(layer, str(d), self.fnt_small, WALL, P(0, 0.5, d - 0.5), S)
 
     # ── GL bridge ─────────────────────────────────────────────────────────────────
 
