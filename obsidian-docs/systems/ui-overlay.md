@@ -77,15 +77,32 @@ correct.
 
 ## Button styling
 
-The buttons are deliberately **solid white pills with crisp black text** — no
-liquid-glass translucency (that was tried and dropped). On hover a button
-**greys slightly** (`BTN_FILL_REST` 255→`BTN_FILL_HOVER` ~214) and lifts with a
-**soft drop shadow** (layered low-alpha rounded rects faking a blur). Each white
-pill sits on a **darkened-grey rounded container** (`GREY_CONTAINER`) for depth;
-that same grey is used for the tab bar, the bottom action group, and the
-world-nav arrows so the language stays consistent. Text colour is black
-(`BTN_TEXT`); labels drawn *directly* on a grey container use light text
-(`GREY_TEXT`).
+> 🔄 **Refit to a grayscale-minimal Button system (2026-06-03).** The buttons no
+> longer hand-roll a "solid white pill" in `demo_overlay.py`; they all render
+> through the shared **`Button` primitive in `UI/buttons.py`** — four variants
+> (PRIMARY solid · SECONDARY outlined · DESTRUCTIVE red · MUTED), three sizes
+> (sm/md/lg = 12/14/16 px), a subtle **7.2 px** radius, and shadows that are
+> none-at-rest / soft-lift-on-hover / tight-inset-on-press. This was an explicit
+> design request that overrode the previously-frozen white-pill language and
+> iPhone radii.
+
+Mapping of the HUD's controls onto the new variants (all via `_draw_btn`, which
+feeds each Button the overlay's existing instant-hover state so hit-testing and
+look stay in lock-step):
+
+| Control | Variant · palette |
+|---|---|
+| Active tab, world-name chip, bottom action pill, "Preview" | `primary` |
+| Inactive tabs, camera toggle (**Off**) | `secondary` (outlined) |
+| Nav arrows, "Back to Grid" | `muted` (solid, legible over the scene) |
+| Camera toggle (**On**) | `primary` (filled — On/Off = emphasis) |
+
+The PRIMARY look in the **dark** palette is a light fill (#EBEBEB) with dark text
+— i.e. it reads like the old white pill, so the over-scene legibility is kept.
+The grey containers (`GREY_CONTAINER`) survive as **structural backings** behind
+the tab bar / action group / toast, because they keep labels legible over an
+arbitrary live scene; they are not buttons. Nav-arrow triangle glyphs and the WB
+chevrons are still drawn by hand on top of a Button (the font lacks ◀▶→←).
 
 > ⚡ **Hover is INSTANT — no easing.** `hover_t` is binary (0/1), set the moment
 > the pointer enters/leaves the hit area (`update()`), so the grey-fill + shadow
@@ -246,9 +263,13 @@ table as a fallback if that file isn't present.
 ## Constraints
 
 - `demo` mode only; the wallpaper/fullscreen modes draw no HUD.
-- Uses macOS system fonts (SF Pro Display/Text, falling back to Helvetica/Arial).
-- The white-pill visual language and the corner radii are frozen — change them
-  only on explicit request.
+- Uses macOS system fonts (Inter/SF Pro Display, falling back to Helvetica/Arial).
+- The control look now lives in `UI/buttons.py` (grayscale-minimal, 7.2 px radius)
+  — restyle there, not by hand-rolling pills in the overlay.
+- **Hover stays INSTANT** even though the spec's transition system supports
+  easing: `instant_hover=True` is the Button default and `_draw_btn` sets the
+  hover tracker as a binary 0/1. The 0.15 s ease applies only to press/focus.
+  Re-introducing hover easing is the one defect this UI keeps relearning.
 
 ## Dependencies
 

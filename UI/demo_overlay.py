@@ -45,6 +45,12 @@ from pathlib import Path
 
 import pygame
 
+try:
+    # Shared button primitive — the single grayscale-minimal control look.
+    from UI.buttons import Button
+except ImportError:  # source-run fallback when UI isn't the import root
+    from buttons import Button
+
 # OpenGL is imported lazily inside draw_gl() so this module can be imported (and
 # its logic tested) in a headless process with no GL context.
 
@@ -86,20 +92,22 @@ except (FileNotFoundError, json.JSONDecodeError):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  Palette — solid white pill buttons, black text, no glass effects.
+#  Palette — buttons now render via UI/buttons.py (grayscale-minimal variants).
+#  What remains here is STRUCTURAL only: the dark-grey containers, the labels
+#  drawn on them, the full-bleed page fill, and the nav-arrow glyph colour. These
+#  are legibility backings over the live scene, not buttons, so they survive the
+#  swap to the shared Button primitive.
 # ══════════════════════════════════════════════════════════════════════════════
 
-BTN_FILL_REST  = (255, 255, 255, 255)   # solid white at rest
-BTN_FILL_HOVER = (214, 215, 222, 255)   # greys out slightly on hover
+BTN_FILL_REST  = (255, 255, 255, 255)   # full-bleed white page fill + toast pill
 
-# Grey rounded container that sits BEHIND white pills (the "darkened grey
-# background" of the tab bar). One grey, used everywhere — containers, the bottom
-# action group, and the world-nav arrows — so the language stays consistent.
+# Grey rounded container that sits BEHIND controls for depth / legibility over
+# the live scene. One grey, used everywhere — the tab bar, the bottom action
+# group, the toast — so the language stays consistent.
 GREY_CONTAINER   = (40, 40, 45, 205)
 GREY_TEXT        = (200, 200, 205)      # light label text drawn on the grey
 GREY_TEXT_DIM    = (150, 150, 156)
-ARROW_FILL       = (40, 40, 45, 205)    # nav arrows — same grey as the containers
-ARROW_GLYPH      = (240, 240, 245)
+ARROW_GLYPH      = (240, 240, 245)      # nav-arrow triangle, drawn over the pill
 
 T_TITLE        = (255, 255, 255)
 T_BODY         = (255, 255, 255)
@@ -160,22 +168,6 @@ def _aa_round_rect(surf, rect, color, radius) -> None:
     surf.blit(pygame.transform.smoothscale(big, (w, h)), rect.topleft)
 
 
-def _glass_button(surf, rect, label, font, primary, hover_t, s=1.0) -> None:
-    """Solid white pill; on hover it greys slightly and lifts with a soft shadow."""
-    radius = int(_BTN_CORNER * s)
-    # Soft drop shadow that grows in on hover (layered rects fake a blur).
-    if hover_t > 0.01:
-        for grow, a in ((8, 18), (4, 30), (1, 42)):
-            g = int(grow * s)
-            _aa_round_rect(surf, rect.inflate(g, g).move(0, int(2 * s)),
-                           (0, 0, 0, int(a * hover_t)), radius + g // 2)
-    # Fill interpolates white → grey by hover amount.
-    fill = tuple(int(BTN_FILL_REST[i] + (BTN_FILL_HOVER[i] - BTN_FILL_REST[i]) * hover_t)
-                 for i in range(4))
-    _aa_round_rect(surf, rect, fill, radius)
-    _text_shadow(surf, label, font, BTN_TEXT, rect.center, s)
-
-
 def _text_shadow(surf, text, font, color, center, s=1.0) -> pygame.Rect:
     t = font.render(text, True, color)
     r = t.get_rect(center=center)
@@ -210,26 +202,6 @@ def _filled_rounded_poly(surf, pts, color, r) -> None:
     for p in sp:
         pygame.draw.circle(big, color, (int(p[0]), int(p[1])), rr)
     surf.blit(pygame.transform.smoothscale(big, (w, h)), (minx, miny))
-
-
-def _nav_arrow(surf, rect, direction, hover_t, s=1.0) -> None:
-    """Grey rounded nav arrow (◀ / ▶). Instant, subtle drop shadow on hover."""
-    radius = int(_BTN_CORNER * s)
-    if hover_t > 0.01:
-        for grow, a in ((6, 16), (3, 26), (1, 34)):
-            g = int(grow * s)
-            _aa_round_rect(surf, rect.inflate(g, g).move(0, int(2 * s)),
-                           (0, 0, 0, int(a * hover_t)), radius + g // 2)
-    _aa_round_rect(surf, rect, ARROW_FILL, radius)
-    # Triangle glyph centred in the rect, with slightly rounded corners.
-    cx, cy = rect.center
-    aw = int(rect.w * 0.18)
-    ah = int(rect.h * 0.24)
-    if direction < 0:   # left ◀
-        pts = [(cx + aw, cy - ah), (cx - aw, cy), (cx + aw, cy + ah)]
-    else:               # right ▶
-        pts = [(cx - aw, cy - ah), (cx + aw, cy), (cx - aw, cy + ah)]
-    _filled_rounded_poly(surf, pts, ARROW_GLYPH, r=max(2, int(3 * s)))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -293,6 +265,7 @@ class DemoOverlay:
         self._ctrl_alpha = 1.0
         self._last_input = self._now()
         self.hover: str | None = None
+        self._press_key: str | None = None    # control held down → active state
         self._hover_anim: dict[str, float] = {}
         self._toast: tuple[str, float] | None = None
 
@@ -512,6 +485,10 @@ class DemoOverlay:
         S = self.s
         w, h = self.w, self.h
         self._buttons = {}
+        # Detached tab-style mini-bars for the World Builder nav controls (set in
+        # the world_builder branch below; None when not on that tab).
+        self._wb_preview_bar = None
+        self._wb_back_bar = None
         pad = int(16 * S)
         btn_gap = int(8 * S)
 
@@ -584,15 +561,28 @@ class DemoOverlay:
                     cam_btn_w, cam_btn_h)
 
             elif self._active_tab == "world_builder":
+                # Both WB nav controls live on the tab-bar ROW as detached grey
+                # mini-bars holding a single tab-style pill — same top/height as
+                # the main tab bar, but visually disconnected from it.
+                mb_pad = tb_pad
+                mb_h = tab_h
                 if self._wb_view == "grid":
-                    # Large "Preview →" pill, centred beneath the grid canvas.
-                    pw, ph = int(220 * S), int(54 * S)
+                    # Preview — parallel to the tab bar, detached to the RIGHT.
+                    pill_w = int(120 * S)
+                    bar_x = self._tabbar.right + int(12 * S)
+                    self._wb_preview_bar = pygame.Rect(
+                        bar_x, self._tabbar.y, pill_w + mb_pad * 2, mb_h + mb_pad * 2)
                     self._buttons["wb_preview"] = pygame.Rect(
-                        w // 2 - pw // 2, h - ph - int(40 * S), pw, ph)
-                else:   # preview view → "← Back to Grid" pill, top-left.
-                    bw, bh = int(196 * S), int(46 * S)
+                        bar_x + mb_pad, self._tabbar.y + mb_pad, pill_w, mb_h)
+                else:
+                    # Back to Canvas — top-LEFT, roughly where it was, aligned to
+                    # the tab-bar row.
+                    pill_w = int(150 * S)
+                    bar_x = int(24 * S)
+                    self._wb_back_bar = pygame.Rect(
+                        bar_x, self._tabbar.y, pill_w + mb_pad * 2, mb_h + mb_pad * 2)
                     self._buttons["wb_back"] = pygame.Rect(
-                        int(28 * S), int(26 * S), bw, bh)
+                        bar_x + mb_pad, self._tabbar.y + mb_pad, pill_w, mb_h)
 
     def _hit(self, pos) -> str | None:
         for key, rect in self._buttons.items():
@@ -610,7 +600,11 @@ class DemoOverlay:
             self.hover = self._hit(sp)
         elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
             self._last_input = self._now()
-            self._click(self._hit(sp))
+            key = self._hit(sp)
+            self._press_key = key            # active-state visual while held
+            self._click(key)
+        elif ev.type == pygame.MOUSEBUTTONUP and ev.button == 1:
+            self._press_key = None
         elif ev.type == pygame.KEYDOWN and ev.key in (pygame.K_ESCAPE, pygame.K_q):
             self.should_quit = True
 
@@ -736,8 +730,29 @@ class DemoOverlay:
             self.tracking_active, self.camera_denied,
             self._active_tab, self._wb_view, self.active_world, self.camera_enabled,
             self._toast[0] if self._toast else None,
+            self._press_key,
             tuple(round(self._hover_anim.get(k, 0.0), 2) for k in self._buttons),
         )
+
+    def _draw_btn(self, surf, rect, label, variant, size, dark, *, key=None):
+        """Render one control with the shared Button primitive (UI/buttons.py).
+
+        The overlay stores its rects in PHYSICAL px (already × self.s); Button
+        works in logical px × scale, so we hand it the logical rect and draw at
+        self.s. Hover/press come from the overlay's existing INSTANT-hover state
+        keyed by `key`, so the new look stays in lock-step with the tested
+        hit-testing — no easing is introduced on hover (the frozen rule). Returns
+        the Button so callers can overlay a glyph (the nav arrows / WB chevrons).
+        """
+        S = self.s
+        logical = pygame.Rect(round(rect.x / S), round(rect.y / S),
+                              round(rect.w / S), round(rect.h / S))
+        b = Button(logical, label, variant=variant, size=size, dark=dark)
+        if key is not None:
+            b._hover_t = self._hover_anim.get(key, 0.0)        # binary (instant)
+            b._press_t = 1.0 if self._press_key == key else 0.0
+        b.draw(surf, S)
+        return b
 
     def render_surface(self) -> pygame.Surface:
         sig = self._signature()
@@ -760,7 +775,9 @@ class DemoOverlay:
 
         # ── Worlds tab — nav arrows, world-name pill, bottom action group ─────
         if self._active_tab == "worlds":
-            # World-name pill (white pill on a grey container), centred under tabs.
+            # World-name chip — a static light pill (primary look in the dark
+            # palette → light fill, dark text) so the active world stays legible
+            # over any scene. Non-interactive (no hover key).
             wname = self._world_names.get(self.active_world, self.active_world)
             tw = self.fnt_btn.size(wname)[0]
             pill_w = tw + int(44 * S)
@@ -768,24 +785,29 @@ class DemoOverlay:
             name_pill = pygame.Rect(cx - pill_w // 2,
                                     self._worldname_cy - pill_h // 2,
                                     pill_w, pill_h)
-            _grey_container(layer, name_pill.inflate(int(10 * S), int(10 * S)), s=S)
-            _aa_round_rect(layer, name_pill, BTN_FILL_REST, int(_BTN_CORNER * S))
-            _text_shadow(layer, wname, self.fnt_btn, BTN_TEXT, name_pill.center, S)
+            self._draw_btn(layer, name_pill, wname, "primary", "lg", dark=True)
 
-            # Navigation arrows (grey, instant hover shadow).
-            _nav_arrow(layer, self._buttons["world_prev"], -1,
-                       self._hover_anim.get("world_prev", 0.0), s=S)
-            _nav_arrow(layer, self._buttons["world_next"], +1,
-                       self._hover_anim.get("world_next", 0.0), s=S)
+            # Navigation arrows — muted solid pills (legible over the scene) with
+            # the triangle glyph drawn on top.
+            for key, direction in (("world_prev", -1), ("world_next", +1)):
+                r = self._buttons[key]
+                self._draw_btn(layer, r, "", "muted", "md", dark=True, key=key)
+                acx, acy = r.center
+                aw, ah = int(r.w * 0.18), int(r.h * 0.24)
+                if direction < 0:   # left ◀
+                    pts = [(acx + aw, acy - ah), (acx - aw, acy), (acx + aw, acy + ah)]
+                else:               # right ▶
+                    pts = [(acx - aw, acy - ah), (acx + aw, acy), (acx - aw, acy + ah)]
+                _filled_rounded_poly(layer, pts, ARROW_GLYPH, r=max(2, int(3 * S)))
 
-            # Bottom-centred action group: grey container + status + action pill.
+            # Bottom-centred action group: grey container (legibility) + status
+            # label + the single primary action button.
             _grey_container(layer, self._action_group, s=S)
             _text_shadow(layer, self._status_text(), self.fnt_status,
                          GREY_TEXT, self._status_rect.center, S)
             label, _ = self._primary()
-            _glass_button(layer, self._buttons["primary"], label, self.fnt_btn,
-                          primary=True,
-                          hover_t=self._hover_anim.get("primary", 0.0), s=S)
+            self._draw_btn(layer, self._buttons["primary"], label,
+                           "primary", "lg", dark=True, key="primary")
 
         # ── Settings tab — blank white page + camera-access toggle ────────────
         elif self._active_tab == "settings":
@@ -794,50 +816,38 @@ class DemoOverlay:
                          (cx, self._content_top), S)
             if "camera_toggle" in self._buttons:
                 r = self._buttons["camera_toggle"]
-                # Grey container behind the pill so it reads on the white page.
-                _grey_container(layer, r.inflate(int(12 * S), int(12 * S)), s=S)
                 cam_label = ("Camera Access  ·  On" if self.camera_enabled
                              else "Camera Access  ·  Off")
-                _glass_button(layer, r, cam_label, self.fnt_btn, primary=False,
-                              hover_t=self._hover_anim.get("camera_toggle", 0.0), s=S)
+                # Toggle state is conveyed by emphasis: On = filled primary,
+                # Off = outlined secondary. Light palette — it sits on the white
+                # Settings page, so the border/tint read without a grey backing.
+                variant = "primary" if self.camera_enabled else "secondary"
+                self._draw_btn(layer, r, cam_label, variant, "lg", dark=False,
+                               key="camera_toggle")
 
         # ── World Builder tab — grid editor / live preview ────────────────────
         elif self._active_tab == "world_builder":
             if self._wb_view == "grid":
                 # Grid editor: the world (the big labeled box) dominates a white
-                # page; one large "Preview →" pill is the natural next step.
+                # page; the Preview control sits on the tab-bar row (detached,
+                # right) as a grey mini-bar holding a white tab-style pill.
                 layer.fill(BTN_FILL_REST)                   # full-bleed blank white
                 self._draw_builder_canvas(layer, S)
                 if "wb_preview" in self._buttons:
-                    r = self._buttons["wb_preview"]
-                    _grey_container(layer, r.inflate(int(12 * S), int(12 * S)), s=S)
-                    _glass_button(layer, r, "Preview", self.fnt_btn,
-                                  primary=False,
-                                  hover_t=self._hover_anim.get("wb_preview", 0.0),
-                                  s=S)
-                    # Right-pointing chevron after the label (the font lacks "→").
-                    tw = self.fnt_btn.size("Preview")[0]
-                    ax, ay, a = r.centerx + tw // 2 + int(18 * S), r.centery, int(8 * S)
-                    _filled_rounded_poly(layer, [(ax - a, ay - a), (ax + a, ay),
-                                                 (ax - a, ay + a)], BTN_TEXT,
-                                         max(2, int(2 * S)))
+                    _aa_round_rect(layer, self._wb_preview_bar, GREY_CONTAINER,
+                                   int(_TABBAR_CORNER * S))
+                    self._draw_btn(layer, self._buttons["wb_preview"], "Preview",
+                                   "primary", "sm", dark=True, key="wb_preview")
             else:
                 # Live preview: transparent over the real off-axis 3-D render
-                # (preview_active drives the engine); only a "← Back to Grid" pill
-                # floats top-left so the user can iterate without losing work.
+                # (preview_active drives the engine). "Back to Canvas" sits on the
+                # tab-bar row, top-left, as a detached grey mini-bar + white tab
+                # pill — it reads as a tab, disconnected from the real tab bar.
                 if "wb_back" in self._buttons:
-                    r = self._buttons["wb_back"]
-                    _grey_container(layer, r.inflate(int(12 * S), int(12 * S)), s=S)
-                    _glass_button(layer, r, "Back to Grid", self.fnt_small,
-                                  primary=False,
-                                  hover_t=self._hover_anim.get("wb_back", 0.0),
-                                  s=S)
-                    # Left-pointing chevron before the label (the font lacks "←").
-                    tw = self.fnt_small.size("Back to Grid")[0]
-                    ax, ay, a = r.centerx - tw // 2 - int(16 * S), r.centery, int(7 * S)
-                    _filled_rounded_poly(layer, [(ax + a, ay - a), (ax - a, ay),
-                                                 (ax + a, ay + a)], BTN_TEXT,
-                                         max(2, int(2 * S)))
+                    _aa_round_rect(layer, self._wb_back_bar, GREY_CONTAINER,
+                                   int(_TABBAR_CORNER * S))
+                    self._draw_btn(layer, self._buttons["wb_back"], "Back to Canvas",
+                                   "primary", "sm", dark=True, key="wb_back")
 
         # ── Community tab — blank white page, coming soon ─────────────────────
         elif self._active_tab == "community":
@@ -859,13 +869,13 @@ class DemoOverlay:
                           ("tab:community", "Community"),
                           ("tab:settings", "Settings")):
             r = self._buttons[key]
-            if key == f"tab:{self._active_tab}":
-                _aa_round_rect(surf, r, BTN_FILL_REST, int(_BTN_CORNER * S))
-                _text_shadow(surf, text, self.fnt_small, BTN_TEXT, r.center, S)
-            else:
-                if self._hover_anim.get(key, 0.0) > 0.5:   # instant hover highlight
-                    _aa_round_rect(surf, r, (255, 255, 255, 72), int(_BTN_CORNER * S))
-                _text_shadow(surf, text, self.fnt_small, GREY_TEXT, r.center, S)
+            # Inverted scheme: the OCCUPIED tab is a BLACK pill (primary in the
+            # LIGHT palette → near-black fill, off-white text); the rest are WHITE
+            # pills (primary in the DARK palette → off-white fill, black text).
+            # The grey tab-bar container behind them is unchanged.
+            active = key == f"tab:{self._active_tab}"
+            self._draw_btn(surf, r, text, "primary", "sm",
+                           dark=not active, key=key)
 
         # Toast (does not fade with idle). On the Worlds tab it floats just above
         # the bottom action group; elsewhere it sits near the bottom edge — never
@@ -911,8 +921,9 @@ class DemoOverlay:
         # Available builder area: below the tab bar, above the "Preview →" pill.
         pad = int(72 * S)
         top = (self._content_top or int(120 * S)) + int(14 * S)
-        btn = self._buttons.get("wb_preview")
-        bottom = (btn.top - int(26 * S)) if btn else (self.h - int(120 * S))
+        # Preview now lives on the tab-bar row (not the bottom edge), so the
+        # canvas gets the full page height down to a bottom margin.
+        bottom = self.h - int(60 * S)
         region_w, region_h = self.w - pad * 2, max(int(80 * S), bottom - top)
         rcx, rcy = self.w / 2, (top + bottom) / 2
 
