@@ -49,30 +49,16 @@ The view is the smooth blend of three independent inputs from
    the screen edge appear to "stick" to real-world coordinates as you move.
    *Sense:* moving right reveals the **left** of the scene (window parallax).
 
-2. **Depth response → on-screen scale** (head depth `hz`). The *mechanism* is
-   per-world (chosen in [[engine-loop-and-daemon]]):
-   - **Object worlds** (default — Earth, The Watcher): **telephoto** via the
-     eye-to-glass distance, `cz = CAM_BASE_Z·e^(+ZOOM_K·hz)`. Leaning in lengthens
-     `cam_z`, narrowing the frustum so a single foreground body
-     telephoto-**magnifies** on approach (the calibrated feel pinned by
-     `sim_viewing` / `sim_vertical`), and it keeps the near-field "push the planet
-     off-screen" vertical exploration.
-   - **Enclosure worlds** (`rendering.enveloping = true` — the Grid Room, the Gem
-     box): a **forward dolly**. `cam_z` is held at `CAM_BASE_Z` so the **FOV is
-     constant** (58° at every distance — no lens zoom), and instead the whole scene
-     is translated toward the eye by `dolly` world units along −z (`DOLLY_GAIN`,
-     baked into the modelview). Leaning in moves the camera *into* the room: the
-     object of interest **grows** with honest perspective, the walls slide past,
-     and the front rim expands off the screen until the viewer is **enveloped**.
-     This is why the mechanism is per-world, not a single global sign: in a
-     *fixed-window* off-axis rig, moving the eye toward the glass mathematically
-     *shrinks* a foreground object (on-screen size ∝ `cz/(cz+10)`), so envelopment
-     and "move in = grow" cannot both come from the `cz` term — the enclosure case
-     gets its depth from a scene translation instead. Pinned by `sim_envelop`.
-
-   These two depth mechanisms are the **two viewing models** a world chooses
-   between via `rendering.enveloping`; see [[viewing-models]] for the full pattern
-   and a decision guide for authoring a new world.
+2. **Depth response → on-screen scale** (head depth `hz`). **Telephoto, identical for
+   every world** (as of 2026-06-02 final): `cz = CAM_BASE_Z·e^(+ZOOM_K·hz)`. Leaning in
+   lengthens `cam_z`, narrowing the frustum so the scene **magnifies** on approach (the
+   calibrated feel pinned by `sim_viewing` / `sim_vertical`), and it keeps the near-field
+   "push the planet off-screen" vertical exploration. Enclosure worlds (Grid Room, Gem)
+   use this **same** response, so a body at the `z = −10` anchor is the same on-screen
+   size in every world. *(An earlier per-world FORWARD DOLLY mechanism — held `cz` at
+   `CAM_BASE_Z` and translated the scene toward the eye to "move into the room" — was
+   removed: in a fixed-window rig it grew a foreground object ~3.6× and diverged from
+   Earth's size, which the user rejected. See [[viewing-models]] / [[known_issues]].)*
 
 3. **Rotation → proximity-gated view pan** (head orientation `yaw`, `pitch`).
    A real observer explores a *far* scene by moving (translation, above) and a
@@ -80,16 +66,15 @@ The view is the smooth blend of three independent inputs from
    the viewer is**: weak far away, dominant up close, with a smoothstep blend so
    there is no perceptible mode switch. *Sense:* turning the head right reveals
    the **right** of the scene (panning a portal) — deliberately the opposite of
-   translation. Object worlds use the frozen gate window `proximity(hz)` =
-   `[ROT_PROX_LO, ROT_PROX_HI] = [0.0, 0.8]`. **Enclosure worlds (merged 2026-06-02)**
-   use the *same* early, wide band but split the weight into engagement × amplitude
-   (`prox = engage(hz)·amp(hz)`, engine `LOOK_*` constants passed as `proximity()`
-   args — `camera_math.py` is untouched): `engage = proximity(hz, [0.35, 1.0])` opens
-   early/wide like Earth, while `amp` caps the look amplitude to ~22 % until the
-   forward dolly carries the front rim off-screen (rim-clear ≈ hz 0.72, derived from
-   `DOLLY_GAIN`), then ramps to full. So enclosures get Earth's blended eye-looking
-   *and* keep their bezel-locked rim — the early look never shears a still-visible
-   grid edge. See [[viewing-models]] and [[what-makes-perspective-optimal]].
+   translation. **Every world** uses the frozen gate window `proximity(hz)` =
+   `[ROT_PROX_LO, ROT_PROX_HI] = [0.0, 0.8]`, so the look fades in over the same
+   distances everywhere. **Enclosure worlds** (`rendering.enveloping = true`) draw a
+   front rim on the glass at `z = 0` that the projection pins to the screen edges as a
+   bezel anchor; a pan would shear that visible rim, so the enclosure look pan is scaled
+   by one constant `LOOK_ENCLOSURE_AMP = 0.35` (≈ 0 at rest via the gate, a small bounded
+   max up close). Object worlds are uncapped → byte-identical. `camera_math.py` is
+   untouched (the cap is a post-multiply in `app_engine.py`). See [[viewing-models]] and
+   [[what-makes-perspective-optimal]].
 
 ## Key constants
 

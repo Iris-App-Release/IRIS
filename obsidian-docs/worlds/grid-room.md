@@ -63,49 +63,44 @@ The Grid Room is drawn in **WORLD space**, before the Earth-anchor translate (ju
 
 ## Enclosure viewing model (`enveloping: true`)
 
-The Grid Room is an *environment you enter*, not an object you look at, so it opts
-into the **enclosure viewing model** via `rendering.enveloping = true` (default is
-`false`, which preserves the object worlds exactly). Two behaviours differ from
-[[earth]] / [[the-watcher]] (see [[off-axis-projection]]):
+The Grid Room sets `rendering.enveloping = true`, but as of **2026-06-02 (final)** that
+flag no longer means "forward dolly / enter the room." It now means just one thing: the
+Grid Room uses the **exact same camera physics as [[earth]]** — same telephoto zoom,
+same frozen proximity look-gate — and differs only by **capping the look amplitude** so
+its bezel-locked front rim never shears. Per the user's directive: the grid worlds'
+zoom and look should "operate EXACTLY the same as the spherical worlds," anchored.
 
-- **Forward dolly (lean IN = move INTO the room).** Head depth does NOT change the
-  eye-to-glass distance — `cz` is held at the neutral `BASE_Z = 11.5` so the FOV is
-  the calibrated **58° at every distance** (no lens zoom). Instead the whole scene
-  is translated toward the eye by `dolly` world units along −z (`DOLLY_GAIN = 15.5`,
-  baked into the modelview). Leaning IN dollies the camera forward into the box:
-  the receding grid lines come toward you with honest perspective, the side walls
-  slide past, and the front rim expands past the screen edges until it clears the
-  near plane — at which point you are **enveloped** (the rim is out of sight, you
-  are inside the room). Leaning OUT returns toward the neutral, bezel-locked
-  framing, which is a **hard zoom-out floor** (`DOLLY_MIN = 0`): you can dolly in
-  from there and back out *to* it, but never further out — leaning back never pulls
-  the camera behind the resting grid. *(Earlier iterations got this
-  wrong twice: the original object-sign telephoto made the grid shrink on approach,
-  and a 2026-06-02 fix flipped the cz sign so leaning in WIDENED the frustum —
-  geometrically the correct fixed-window result, but it stretched/deepened the grid
-  and shrank foreground objects, the opposite of "move in = zoom in." The forward
-  dolly is the model that actually reads as entering the room.)*
-- **Rotational look — merged toward the Earth feel (2026-06-02).** Rather than
-  deferring the look until the viewer is enveloped (the old sequential `[0.75, 1.0]`
-  gate), the Grid Room now adopts the [[earth]] world's **early, wide, blended**
-  look — the "good part of the sphere worlds" — while keeping its bezel-locked rim
-  (the "good part of the grid worlds"). The look weight splits into two factors,
-  `prox = engage(hz)·amp(hz)`: `engage = proximity(hz, [0.35, 1.0])` opens early and
-  wide (zero at neutral → rim stays bezel-locked), and `amp` caps the look amplitude
-  to ~22 % while the front rim is still on screen, ramping to full as the rim clears
-  the near plane (≈ hz 0.72, *derived* from `DOLLY_GAIN`). The bezel-locked rim
-  leaves the screen the instant the dolly starts (hz ≈ 0.02) — long before the look
-  engages at 0.35 — so the rim never shears; and the amplitude cap keeps the receding
-  interior grid from swinging during partial envelopment. Translation (dolly) and
-  rotation (look) now **coexist across a wide band** like Earth, instead of a "first
-  move in, then look around" hand-off. (See [[what-makes-perspective-optimal]] /
+- **Zoom — identical to Earth (telephoto).** Head depth drives the eye-to-glass
+  distance exactly as in the object worlds: `cz = BASE_Z·e^(+ZOOM_K·hz)`. Leaning IN
+  pushes the eye back, the off-axis frustum narrows, and the whole room magnifies
+  (zoom in); leaning OUT recedes it. There is no separate dolly. A body at the Earth
+  anchor (z = −10) subtends the **same on-screen size Earth would** at any head-z.
+  *(An earlier 2026-06-02 model held `cz` constant and dollied the scene forward to
+  read as "entering the room"; it grew foreground objects ~3.6× and diverged from
+  Earth's size, so it was removed.)*
+- **Bezel anchor — the rim stays on the screen edges at every distance.** The front
+  rim is drawn on the glass at world z = 0. Under the off-axis projection, geometry
+  exactly on the z = 0 window plane maps to the screen edges for *any* eye position or
+  zoom — so the rim is pinned to the bezel throughout the whole approach (verified to
+  machine precision across all head-z in `sim_envelop.py`). This is the "good part of
+  the grid worlds," and it now holds at every distance because nothing carries the rim
+  off-screen.
+- **Rotational look — Earth's gate, capped amplitude.** The look uses the frozen
+  `om.proximity(hz)` ([0.0, 0.8]) gate, identical to Earth, so it fades in over the
+  **same head-z distances** and just as smoothly. The catch: a pan rotates the
+  still-visible rim about the eye and would shear it. So the enclosure pan is scaled by
+  a single constant, `LOOK_ENCLOSURE_AMP = 0.35`, in `app_engine.py`. Because the look
+  is also proximity-gated, the pan is ≈ 0 at rest (rim rock-solid) and grows to a small,
+  bounded max as you lean in / get "in the room" — a gentle look that never warps the
+  grid. Raise `LOOK_ENCLOSURE_AMP` toward 1.0 for a more Earth-like pan (more rim
+  shift); lower it for a tighter anchor. (See [[what-makes-perspective-optimal]] /
   [[viewing-models]].)
 
-Pinned by the headless guard `Scripts/validation/sim_envelop.py` (constant FOV;
-monotone forward dolly; foreground body GROWS on lean-in; rim past the near plane
-when enveloped; bezel-locked at neutral; the merged look — early/wide engage,
-amplitude capped until the rim clears, full once enveloped, monotone + C¹; object
-path untouched).
+Pinned by the headless guard `Scripts/validation/sim_envelop.py` (enclosure zoom IS the
+object telephoto law; a z = −10 body is the same size under both paths and grows on
+lean-in; the rim is bezel-locked at every head-z & eye offset; the look uses the frozen
+`om.proximity` gate; the enclosure pan = object pan × `LOOK_ENCLOSURE_AMP`, ≤ object pan,
+monotone + C¹; object path uncapped → Earth byte-identical).
 
 ## Minimal assets
 

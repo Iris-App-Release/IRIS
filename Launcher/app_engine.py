@@ -118,118 +118,58 @@ CAM_LAG_TAU      = -(1.0 / CAM_LAG_REF_FPS) / math.log(1.0 - CAM_LAG)  # ≈ 0.0
 CAM_LAG_DT_MAX   = 0.10           # clamp the smoothing dt so a long stall (resume
                                   # from pause, first frame) can't snap in one step
 
-# Depth response to head-z. There are TWO distinct mechanisms, chosen per world:
-#
-# OBJECT worlds (default, e.g. Earth / The Watcher) — TELEPHOTO via eye-to-glass
-# distance. Exponential in head-z so the scale is perceptually uniform (constant
-# multiplier per unit lean): cz = BASE_Z · e^(+ZOOM_K · hz):
+# Depth response to head-z — TELEPHOTO via eye-to-glass distance, applied
+# IDENTICALLY to EVERY world. Exponential in head-z so the scale is perceptually
+# uniform (constant multiplier per unit lean): cz = BASE_Z · e^(+ZOOM_K · hz):
 #   • hz = 0  → cz = BASE_Z (neutral framing preserved exactly)
 #   • lean IN  (hz→+1)  → larger cz → narrower frustum → world LARGER,  parallax weaker
 #   • lean OUT (hz→-0.7)→ smaller cz → wider  frustum → world smaller, parallax stronger
-#   This is the calibrated telephoto feel that sim_viewing / sim_vertical pin, and
-#   it keeps the near-field vertical "push the planet off-screen" exploration.
+# This is the calibrated telephoto feel that sim_viewing / sim_vertical pin for the
+# OBJECT worlds (Earth / The Watcher) and that keeps the near-field vertical "push
+# the planet off-screen" exploration.
 #
-# ENCLOSURE worlds (world.enveloping = True, e.g. Grid Room / Gem) — FORWARD DOLLY.
-# Leaning in must read as physically MOVING INTO the room (the object of interest
-# grows with honest perspective, the walls slide past, you become enveloped), NOT
-# as a lens zoom. So the eye-to-glass distance is HELD at BASE_Z (the frustum/FOV
-# is the calibrated 58° at every distance — no "illusory zoom trick"), and instead
-# the whole scene is translated toward the eye by `dolly` world units along −z
-# (baked into the modelview, see the render loop). Equivalent to dollying the
-# camera forward into the enclosure:
-#   • hz = 0  → dolly = 0 (neutral framing preserved exactly; rim bezel-locked)
-#   • lean IN  (hz→+1)  → dolly →  DOLLY_GAIN → eye-to-object distance shrinks → the
-#     gem GROWS, the front rim expands past the screen edges and finally clears the
-#     near plane (rim out of sight = fully enveloped), the room surrounds the eye.
-#   • lean OUT (hz<0)   → dolly clamps at 0 (DOLLY_MIN) → the view never pulls back
-#     past the neutral, bezel-locked framing; that resting view is the zoom-out floor.
-# The earlier enclosure model FLIPPED the cz sign (lean in → smaller cz → WIDER
-# frustum), which is the geometrically-correct fixed-window result but SHRANK the
-# gem and stretched/deepened the grid on approach — the opposite of the intended
-# "zoom into the world" feel. The forward dolly replaces it. (off-axis-projection.md)
-ZOOM_K     = 0.95     # head-z → log eye distance; object hz∈[-0.7,1]→cz∈[≈5.9,≈29.7]
+# The ENCLOSURE worlds (Grid Room, Gem — world.enveloping = True) now use this SAME
+# response, per the user's directive that the grid worlds' zoom operate EXACTLY like
+# the sphere worlds. Because a gem sits at the Earth anchor (z = −10) and the camera
+# math is shared, the gem subtends the SAME on-screen size the Earth would at any
+# given head-z — initially and at full lean-in. (A 2026-06-02 experiment instead held
+# cz constant and dollied the scene forward INTO enclosures to read as "entering a
+# room"; it grew the gem ~3.6× and made its size diverge from Earth's, which the user
+# rejected — so the forward dolly was removed. See log 2026-06-02.)
+ZOOM_K     = 0.95     # head-z → log eye distance; hz∈[-0.7,1]→cz∈[≈5.9,≈29.7]
 CAM_Z_MIN  = 5.0      # safety clamps — do not bind in the normal head-z range
 CAM_Z_MAX  = 34.0
-
-# Forward-dolly gain for ENCLOSURE worlds (world units along −z per unit head-z).
-# DOLLY_GAIN is sized so the front rim (at world z = 0) clears the eye / near plane
-# (rim leaves the screen → viewer enveloped) at dolly > BASE_Z − NEAR ≈ 11.2, i.e.
-# at hz ≈ 0.72 (= 11.2 / DOLLY_GAIN). This rim-clear head-z is what LOOK_AMP_LO below
-# is DERIVED from: the merged enclosure look engages early (at capped amplitude) but
-# only un-caps to FULL strength as the rim clears here, so a full-amplitude pan can
-# never shear a still-visible grid edge (the early, pre-envelopment look is
-# amplitude-limited instead — see the LOOK_* block below). A full lean-in (hz→1.0)
-# dollies ~15.5 units, so the gem (at z = −10) closes from ~21.5 to ~6.0 world units
-# (≈3.6× larger).
-# DOLLY_MAX clamps beyond DOLLY_GAIN so the dolly keeps rising across the whole
-# head-z range (the gem grows monotonically all the way to full envelopment).
-# DOLLY_MIN = 0 is a HARD FLOOR at the neutral, bezel-locked framing: the enclosure
-# can be dollied IN from there and back OUT to it, but never further out — leaning
-# back past neutral does not pull the camera behind the bezel-locked grid (the rim
-# stays exactly on the screen edge as the resting view). This is a deliberate UX
-# limit, not a geometry constraint.
-#   CALIBRATE LIVE: DOLLY_GAIN sets how fast you move into the room (and where the
-#   rim clears → where the look reaches FULL amplitude, via LOOK_AMP_LO below).
-#   Raise it for a faster dolly + earlier full-strength look; lower it for a longer
-#   approach. The early look itself is opened by LOOK_ENGAGE_LO and bounded by
-#   LOOK_PRELOOK_AMP (see the LOOK_* block below).
-DOLLY_GAIN = 15.5
-DOLLY_MAX  = 16.0
-DOLLY_MIN  = 0.0      # hard floor: never zoom out past the bezel-locked neutral
 
 # Rotational-exploration gain (proximity-gated in the loop via om.proximity).
 # Horizontal (yaw) uses ROT_MAX_DEG — the user reports lateral looking already
 # feels excellent, so it is left untouched.
 ROT_MAX_RAD = math.radians(om.ROT_MAX_DEG)
 
-# ── Enclosure rotational "look" — MERGED model (2026-06-02) ───────────────────
-# GOAL (what-makes-perspective-optimal.md): give the ENCLOSURE worlds (Grid Room,
-# Gem) the SAME early, wide, BLENDED rotational exploration that makes the [[earth]]
-# object world feel optimal — translation (the dolly) and rotation (the look)
-# coexisting across a broad proximity band, so it reads as "moving AROUND the scene"
-# rather than a sequential "first move in, THEN look around" — WHILE keeping the
-# enclosure's bezel-locked screen anchor (the forward dolly + the on-glass front rim)
-# that the object worlds lack. This is the "take the good parts of both" merge: the
-# sphere worlds' eye-looking + the grid worlds' anchoring.
+# ── Enclosure rotational "look" — amplitude cap to protect the bezel anchor ───
+# The ENCLOSURE worlds (Grid Room, Gem — world.enveloping = True) draw a front rim on
+# the glass at world z = 0. Under the off-axis projection, geometry exactly on that
+# z = 0 window plane maps to the screen edges for ANY eye position or zoom, so the rim
+# is a HARD "bezel anchor" at rest — the good part of the grid worlds. The catch: the
+# rotational look pans the view by rotating the modelview about the eye, which rotates
+# that still-visible rim and SHEARS it off the screen border. The sphere worlds have
+# no rim, so they pan freely; the enclosures cannot, without breaking the anchor.
 #
-# The previous enclosure gate, proximity(hz, [0.88→0.75, 1.0]), deferred ALL rotation
-# until the viewer was nearly enveloped — the sequential feel. We cannot simply open
-# it early, because rotating while the front rim is still on screen shears the visible
-# grid edge (the "grid distorts" regression). The merge resolves this by SPLITTING the
-# single gate into two factors that are multiplied:
-#
-#       prox = engage(hz) · amp(hz)
-#
-#   • engage(hz) = proximity(hz, [LOOK_ENGAGE_LO, LOOK_ENGAGE_HI]) — opens EARLY and
-#     WIDE, mirroring Earth's [0.0, 0.8] band, so the look is available while the
-#     translation (dolly) still dominates → the blended feel. It is zero at neutral
-#     (engage(0) = 0), so the resting rim stays exactly bezel-locked (the anchor).
-#   • amp(hz) caps the rotation AMPLITUDE to LOOK_PRELOOK_AMP (~22 %) while the front
-#     rim is still on screen, then ramps to FULL (1.0) as the rim clears the near
-#     plane. So the early, blended look IS present through the approach but at a tiny
-#     amplitude → the residual shear of the still-visible grid is imperceptible (the
-#     amplitude-gated path from what-makes-perspective-optimal.md), and the look only
-#     reaches full strength once the viewer is enveloped (rim gone, nothing to shear).
-#
-# Both factors are smoothstep (C¹) and non-decreasing, so prox is monotone and C¹ —
-# no felt mode switch. LOOK_AMP_LO is DERIVED from DOLLY_GAIN as the head-z at which
-# the dolly carries the rim past the near plane ((BASE_Z − NEAR)/DOLLY_GAIN ≈ 0.72),
-# so the amplitude un-caps exactly as the rim leaves the screen — the two stay coupled
-# if either is retuned. OBJECT worlds are untouched: they keep the frozen proximity(hz)
-# gate ([0.0, 0.8]) and never amplitude-cap, so Earth/Watcher + sim_viewing/sim_vertical
-# are byte-identical. camera_math.py is untouched (every lo/hi is a proximity() arg).
-# Pinned by Scripts/validation/sim_envelop.py. Applied per-world via world.enveloping.
-#   CALIBRATE LIVE: LOOK_ENGAGE_LO sets how far from the screen the look starts (lower
-#   = more Earth-like blend, earlier rotation); LOOK_PRELOOK_AMP sets how much
-#   pre-envelopment look is allowed (raise it until the still-visible grid just begins
-#   to shear, then back off). LOOK_AMP_LO/HI track the rim clear and rarely need hand-
-#   tuning — they follow DOLLY_GAIN.
-LOOK_ENGAGE_LO   = 0.35   # head-z at which the enclosure look begins to fade in (early/wide, Earth-like)
-LOOK_ENGAGE_HI   = 1.0    # head-z at which the engagement weight reaches full
-LOOK_PRELOOK_AMP = 0.22   # rotation-amplitude cap while the front rim is still on screen (imperceptible shear)
-_RIM_CLEAR_HZ    = (BASE_Z - om.NEAR) / DOLLY_GAIN     # head-z at which the dolly clears the rim (≈0.72)
-LOOK_AMP_LO      = _RIM_CLEAR_HZ                        # amplitude begins ramping PRELOOK→full as the rim clears
-LOOK_AMP_HI      = min(1.0, _RIM_CLEAR_HZ + 0.20)      # amplitude reaches full once fully enveloped (≈0.92)
+# Resolution (the user's directive — "option 3 / hybrid gate" from
+# what-makes-perspective-optimal.md): the enclosure worlds use the SAME telephoto zoom
+# AND the SAME proximity gate TIMING as the sphere worlds (so the look fades in over
+# the SAME head-z distances and transitions just as smoothly — om.proximity(hz), the
+# frozen [0.0, 0.8] band), but the look AMPLITUDE is capped to LOOK_ENCLOSURE_AMP so the
+# bezel rim never visibly shears — "just limit the amount of distance I can look/pan in
+# the grids." The look is ALSO proximity-gated (prox ≈ 0 at neutral, growing as you lean
+# in), so the product prox·cap is ≈ 0 at rest — the rim is rock-solid anchored when
+# you're back, and you only earn a small, bounded pan once you're leaning in / "in the
+# room". Object worlds (Earth / The Watcher) are NOT capped → byte-identical to before.
+# camera_math.py is untouched (the gate is the frozen om.proximity; the cap is a plain
+# post-multiply here). Pinned by Scripts/validation/sim_envelop.py.
+#   CALIBRATE LIVE: raise LOOK_ENCLOSURE_AMP toward 1.0 for a more Earth-like full pan
+#   (but more rim shear near full lean-in); lower it for a tighter bezel anchor with
+#   less look; 0.0 disables the enclosure look entirely (a pure anchored window).
+LOOK_ENCLOSURE_AMP = 0.35
 
 # NEAR-FIELD VERTICAL EXPLORATION (Objective #2). Vertical looking gets its OWN,
 # larger gain than yaw so that up close the viewer can peer UP / DOWN far enough
@@ -513,7 +453,6 @@ def main() -> None:
     # Camera & animation state
     cam_x = cam_y = 0.0
     cam_z         = BASE_Z
-    dolly         = 0.0         # enclosure forward-dolly offset (world units, −z); 0 for object worlds
     cam_yaw = cam_pitch = 0.0   # smoothed, proximity-gated view rotation (rad)
 
     # Sun in WORLD space — slight front-right + above
@@ -704,43 +643,25 @@ def main() -> None:
         cam_x += cam_alpha * (-hx * shift        - cam_x)
         cam_y += cam_alpha * ( hy * shift * 0.55 - cam_y)
 
-        # 2. DEPTH RESPONSE (head depth → on-screen scale), per-world.
-        # OBJECT worlds (default): TELEPHOTO. Leaning IN (hz → +1) pushes the eye
-        # AWAY from the glass so the frustum narrows and the world grows; leaning
-        # OUT pulls the eye toward the glass so the world recedes. cam_z also sets
-        # translational-parallax strength (strong far / reduced close), dolly = 0.
-        # ENCLOSURE worlds (world.enveloping): FORWARD DOLLY. The eye-to-glass
-        # distance is HELD at BASE_Z (FOV constant — no lens zoom), and instead the
-        # scene is translated toward the eye by `dolly` along −z (baked into the
-        # modelview below), so the gem GROWS with honest perspective and the room
-        # envelops the viewer as the front rim clears the screen. (off-axis-projection.md)
-        if world.enveloping:
-            cam_z_target = BASE_Z
-            dolly_target = max(DOLLY_MIN, min(DOLLY_MAX, DOLLY_GAIN * hz))
-        else:
-            cam_z_target = max(CAM_Z_MIN, min(CAM_Z_MAX, BASE_Z * math.exp(ZOOM_K * hz)))
-            dolly_target = 0.0
+        # 2. DEPTH RESPONSE (head depth → on-screen scale) — TELEPHOTO, identical for
+        # EVERY world. Leaning IN (hz → +1) pushes the eye AWAY from the glass so the
+        # frustum narrows and the world grows; leaning OUT pulls the eye toward the
+        # glass so the world recedes. cam_z also sets translational-parallax strength
+        # (strong far / reduced close). The enclosure worlds (Grid Room, Gem) use this
+        # SAME response — so the gem at the Earth anchor (z = −10) subtends the SAME
+        # on-screen size the Earth would at any given head-z (the grid worlds zoom
+        # EXACTLY like the sphere worlds, per the user's directive). The earlier
+        # forward-dolly enclosure mechanism was removed. (off-axis-projection.md)
+        cam_z_target = max(CAM_Z_MIN, min(CAM_Z_MAX, BASE_Z * math.exp(ZOOM_K * hz)))
         cam_z += cam_alpha * (cam_z_target - cam_z)
-        dolly += cam_alpha * (dolly_target - dolly)
 
         # 3. ROTATION (head orientation → view pan), gated by PROXIMITY so it is
         # weak far away and dominant up close — a smooth blend, never a switch.
         # Turning the head right pans the portal right (revealing the scene's
-        # RIGHT — the opposite sense to translation, as intended).
-        # Enclosure worlds use the MERGED look (what-makes-perspective-optimal.md):
-        # engage EARLY + WIDE like Earth (rotation coexists with the dolly across a
-        # broad band — the blended feel), but CAP the amplitude while the front rim is
-        # still on screen so the visible grid never shears, ramping to full strength
-        # only once the rim clears (enveloped). prox = engage(hz)·amp(hz), both
-        # smoothstep ⇒ monotone + C¹. Object worlds keep the frozen default gate (their
-        # feel + sim_viewing/sim_vertical unchanged).
-        if world.enveloping:
-            engage  = om.proximity(hz, lo=LOOK_ENGAGE_LO, hi=LOOK_ENGAGE_HI)
-            amp     = LOOK_PRELOOK_AMP + (1.0 - LOOK_PRELOOK_AMP) * \
-                      om.proximity(hz, lo=LOOK_AMP_LO, hi=LOOK_AMP_HI)
-            prox    = engage * amp
-        else:
-            prox    = om.proximity(hz)
+        # RIGHT — the opposite sense to translation, as intended). The gate TIMING is
+        # IDENTICAL for every world — om.proximity(hz), the frozen [0.0, 0.8] band — so
+        # the enclosure look fades in over the SAME head-z distances as the Earth world.
+        prox        = om.proximity(hz)
         yaw_target  =  yaw   * ROT_MAX_RAD * prox
         # Vertical uses its OWN larger gain (ROT_MAX_PITCH_RAD) so the viewer can
         # peer up/down far enough to push the Earth off-screen up close, then the
@@ -749,6 +670,15 @@ def main() -> None:
         # untouched ROT_MAX_RAD — lateral looking already feels right.)
         pitch_in    = (pitch - LOOK_PITCH_OFFSET * prox) if tracker.has_rotation else pitch
         pitch_tgt   =  pitch_in * ROT_MAX_PITCH_RAD * prox
+        # ENCLOSURE worlds (Grid Room, Gem): the front rim is bezel-locked on the glass
+        # (z = 0); a full pan would rotate that still-visible rim and shear it. Same zoom
+        # + same gate timing as the sphere worlds — only the look AMPLITUDE is capped so
+        # the anchor holds ("limit the distance I can look/pan in the grids"). Combined
+        # with the proximity gate above, the pan is ≈0 at rest (rim solid) and grows to a
+        # small bounded max as you lean in. Object worlds are uncapped → byte-identical.
+        if world.enveloping:
+            yaw_target *= LOOK_ENCLOSURE_AMP
+            pitch_tgt  *= LOOK_ENCLOSURE_AMP
         pitch_tgt   =  max(-PITCH_PAN_MAX_RAD, min(PITCH_PAN_MAX_RAD, pitch_tgt))
         cam_yaw    += cam_alpha * (yaw_target - cam_yaw)
         cam_pitch  += cam_alpha * (pitch_tgt  - cam_pitch)
@@ -838,16 +768,6 @@ def main() -> None:
         # When far (prox→0) cam_yaw/pitch decay to 0 and this is a pure window;
         # up close it pans the portal so the viewer can "peek around" the world.
         mv = om.view_matrix(cam_x, cam_y, cam_z, cam_yaw, cam_pitch)
-        # ENCLOSURE forward dolly: translate the whole scene +z (toward the eye) by
-        # `dolly` so leaning in moves the camera INTO the room — the gem grows with
-        # honest perspective and the rim slides off-screen, with the FOV unchanged
-        # (cam_z is held at BASE_Z above). Right-multiply so it pre-translates world
-        # geometry before the view transform; the 3×3 rotation (→ sun_eye) is
-        # unaffected. dolly ≡ 0 for object worlds, so their modelview is unchanged.
-        if dolly != 0.0:
-            T = np.identity(4, dtype=np.float64)
-            T[2, 3] = dolly
-            mv = mv @ T
         glLoadMatrixf(np.ascontiguousarray(mv.T, dtype=np.float32))
 
         # Sun in EYE space (every shader does its math there). The view rotation

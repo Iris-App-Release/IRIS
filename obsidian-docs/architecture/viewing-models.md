@@ -21,43 +21,58 @@ sources:
   - Scripts/validation/sim_envelop.py
 ---
 
-# Viewing Models — the two illusion methods
+# Viewing Models — one camera, two world styles
 
-IRIS has **two distinct, fully-supported ways** of turning head-depth into an
-on-screen depth response. Both ride the *same* frozen off-axis "window" core
-([[off-axis-projection]]) and the same lateral parallax; they differ only in how
-**leaning in / out** (head depth `hz`) is interpreted. Picking the right one is the
-single most important authoring decision for a new world — it is what makes a world
-feel like *an object you look at* versus *a space you move into*.
+IRIS turns head-depth into an on-screen depth response with **one shared camera
+model**: the frozen off-axis "window" core ([[off-axis-projection]]), telephoto
+eye-distance scaling, and a proximity-gated rotational look. Every world — object or
+enclosure — uses it identically, so they all **zoom the same way and the look fades in
+over the same head-z distances.**
 
-This page is the canonical reference for that choice. The switch is one declarative
-flag, `rendering.enveloping` (default `false`), read by [[world-system]]
-(`WorldRuntime.enveloping`) and branched on in `Launcher/app_engine.py`. **No camera
-math changes between the two models** — `Engine/camera_math.py` stays frozen; the
-difference lives entirely in the consuming layer (eye-distance scaling vs. a
-modelview dolly, and the look-gate window).
+What differs is **world style**, not camera math:
+- **Object / open worlds** ([[earth]], [[the-watcher]]) — a hero body floating in empty
+  or atmospheric space, no front boundary; the look pans freely.
+- **Rim-anchored enclosure worlds** ([[grid-room]], [[gem]]) — geometry whose front rim
+  sits on the glass at `z = 0`, bezel-locked to the screen edges as a hard anchor;
+  because a pan would shear that visible rim, the look **amplitude is capped**.
+
+The switch is one declarative flag, `rendering.enveloping` (default `false`), read by
+[[world-system]] (`WorldRuntime.enveloping`) and branched on in
+`Launcher/app_engine.py`. **No camera math changes between the two** —
+`Engine/camera_math.py` stays frozen; the *only* engine difference is a single
+post-multiply that caps the enclosure look pan (`LOOK_ENCLOSURE_AMP`).
+
+> [!note] History — there used to be two depth responses
+> Through 2026-06-02 the enclosure worlds used a genuinely different depth mechanism: a
+> **forward dolly** (held `cam_z` constant and translated the scene toward the eye, so
+> leaning in "moved you into the room" and grew a hero object ~3.6×). The user rejected
+> it — they wanted the grid worlds to behave **exactly** like the sphere worlds (same
+> zoom, same look distances, gem the same size as Earth), just anchored. So the dolly
+> was removed; enclosures now share Earth's telephoto camera and differ only by the rim
+> anchor + the capped look. (log: 2026-06-02 "revert+resimplify".)
 
 ---
 
-## Why there must be two (the geometry)
+## The geometry, and why the enclosure caps the look
 
 The monitor is a **fixed rectangle** at world `z = 0` (the glass); the scene lives
-behind it; the eye is the tracked head at `z = +cam_z`. Under this fixed-window
-off-axis projection a foreground object at `z = −10` has on-screen size proportional
-to `cam_z / (cam_z + 10)`. That single fact forces the split:
+behind it; the eye is the tracked head at `z = +cam_z`. Two consequences matter:
 
-- Moving the eye **toward** the glass (smaller `cam_z`) *widens* the frustum — you
-  see more of the surrounding scene (envelopment) — but it **shrinks** a foreground
-  object. This is geometrically what a real window does.
-- Moving the eye **away** from the glass (larger `cam_z`) *narrows* the frustum and
-  **magnifies** a foreground object (telephoto), but kills envelopment.
+1. **Telephoto zoom (shared).** A foreground object at `z = −10` has on-screen size
+   proportional to `cam_z / (cam_z + 10)`. Leaning in pushes the eye *back* (larger
+   `cam_z` via `BASE_Z·e^(+ZOOM_K·hz)`), narrowing the frustum and **magnifying** the
+   scene. Every world uses this, so a body at the anchor is the same size in every world.
+2. **The z = 0 plane is always the screen.** Geometry exactly on the window plane maps
+   to the screen edges for *any* eye position or zoom. So an enclosure's front rim
+   (drawn at `z = 0`) is **bezel-locked at every distance** — a free, exact anchor.
 
-So "the hero object grows as I approach" and "the space wraps around me as I
-approach" **cannot both come from the `cam_z` term** — they pull it in opposite
-directions. The two viewing models resolve this by getting depth from two different
-mechanisms. A global one-size flip was explored and rejected (it inverts the
-calibrated Earth zoom and guts near-field vertical exploration — see
-[[known_issues]]), which is why the model is **per-world, not global**.
+The catch is rotation: the look pans by rotating the modelview about the eye, which
+rotates that still-visible rim and **shears** it off the screen border. Object worlds
+have no rim, so they pan at full amplitude. Enclosure worlds cap the pan
+(`LOOK_ENCLOSURE_AMP`) so the rim's on-screen shift stays a gentle settle. That cap is
+the entire difference between the two styles. *(A 2026-06-02 forward-dolly model carried
+the rim off-screen so the look could be uncapped once "enveloped"; it was removed because
+it made the hero object diverge from Earth's size — see the note above and [[known_issues]].)*
 
 ---
 
@@ -89,92 +104,90 @@ guards — treat them as frozen; an enclosure change must leave them byte-identi
 
 ---
 
-## Method B — Enclosure / Forward-dolly
+## Method B — Rim-anchored enclosure
 
-> **Mental model:** the monitor is the open face of a box you lean *into*. Leaning in
-> moves you forward through the opening; objects inside grow with honest perspective;
-> the walls slide past until they surround you; only once you are inside do you turn
-> your head to look around.
+> **Mental model:** the monitor is a window with a visible frame on the glass, looking
+> into a box. The frame stays pinned to the screen edges (sealed); leaning in zooms
+> into the box exactly as Earth zooms; up close you can glance around inside it, but
+> only gently — the frame must not warp.
 
 **Worlds:** [[grid-room]], [[gem]]. **Flag:** `enveloping: true`.
 
-**Depth response — a forward dolly, not a lens zoom.** Eye-to-glass distance is
-**held at `BASE_Z`** so the FOV is the calibrated **58° at every distance** (no zoom
-trick). Depth instead comes from translating the whole scene toward the eye by
-`dolly` world units along −z, baked into the modelview
-(`mv = view_matrix(...) @ T(0, 0, dolly)`):
-`dolly = clamp(DOLLY_GAIN·hz, [DOLLY_MIN, DOLLY_MAX])` with `DOLLY_GAIN = 13`,
-`DOLLY_MAX = 14`, **`DOLLY_MIN = 0`**.
-- Lean **in** → `dolly` grows → eye-to-object distance shrinks → the hero object
-  **grows** with honest perspective (≈2.5× at full lean); the front rim expands past
-  the screen edges and finally clears the near plane → the viewer is **enveloped**
-  (rim out of sight, inside the space).
-- Lean **out** → `dolly` clamps at **0**: the neutral, **bezel-locked** framing is a
-  **hard zoom-out floor**. You can dolly in from there and back out *to* it, never
-  past it — leaning back never pulls the camera behind the bezel-locked grid. (A
-  deliberate UX limit, not a geometry constraint.)
+**Depth response — identical to Method A (telephoto).** `cam_z = BASE_Z · e^(+ZOOM_K·hz)`,
+same constants, same clamps. There is **no dolly**. A body at the anchor (`z = −10`)
+subtends the **same on-screen size it would in an object world** at every head-z. This
+is the point of the 2026-06-02 revert: the grid worlds zoom *exactly* like the sphere
+worlds, so the gem matches Earth's size initially and at full lean-in.
 
-**Rotational look — merged toward the Earth feel (2026-06-02).** The look now engages
-**early and wide**, like the object world's `proximity(hz, [0.0, 0.8])` band, so
-rotation blends with the dolly across the whole approach instead of waiting for full
-envelopment (the old "first move in, then look around" sequential gate). The single
-weight is split into two smoothstep factors, `prox = engage(hz)·amp(hz)`:
-- `engage = proximity(hz, [LOOK_ENGAGE_LO, LOOK_ENGAGE_HI] = [0.35, 1.0])` — opens
-  early/wide (zero at neutral, so the resting rim stays bezel-locked).
-- `amp = LOOK_PRELOOK_AMP + (1−LOOK_PRELOOK_AMP)·proximity(hz, [LOOK_AMP_LO, LOOK_AMP_HI])`
-  — caps the look amplitude to ~22 % while the front rim is still on screen, then
-  ramps to full as the rim clears the near plane. `LOOK_AMP_LO` is *derived* from
-  `DOLLY_GAIN` (the rim-clear head-z, ≈ 0.72), so cap-release always tracks the rim.
+**The anchor.** The enclosure's front rim is drawn on the glass at `z = 0`, so the
+off-axis projection pins it to the screen edges at **every** distance and eye offset —
+a hard bezel anchor, with no special code (it falls out of the window geometry).
 
-The bezel-locked rim leaves the *screen* the instant the dolly starts (hz ≈ 0.02),
-well before the look engages (hz ≈ 0.35) — so the rim never shears on its way out —
-and the amplitude cap keeps the only other still-visible geometry (the receding
-interior grid) from swinging during partial envelopment. Full-strength look arrives
-only once enveloped. Product of two smoothsteps ⇒ monotone + C¹, no felt mode switch.
-This is the "take the good parts of both" merge: the sphere worlds' blended
-eye-looking + the grid worlds' screen anchor. (what-makes-perspective-optimal.md)
+**Rotational look — Earth's gate, capped amplitude.** The look uses the frozen
+`proximity(hz)` over `[0.0, 0.8]` — *identical* to Method A, so it engages over the same
+distances and just as smoothly. The pan target is then scaled by one constant before
+smoothing:
 
-**Best for:** an environment that surrounds the viewer, or a hero object presented
-*inside* a space — a room, a corridor, a diorama, a jewel in a box. Draw the
+```
+prox        = proximity(hz)                 # same as the object worlds
+yaw_target  = yaw   * ROT_MAX_RAD       * prox
+pitch_tgt   = pitch * ROT_MAX_PITCH_RAD * prox
+if world.enveloping:
+    yaw_target *= LOOK_ENCLOSURE_AMP        # 0.35 — the one difference
+    pitch_tgt  *= LOOK_ENCLOSURE_AMP
+```
+
+Because `prox · cap` is a smoothstep × constant, the pan is **≈ 0 at rest** (rim
+rock-solid) and grows to a small bounded max as you lean in — a gentle look that never
+shears the rim. `LOOK_ENCLOSURE_AMP` is the single live-feel knob: toward 1.0 = more
+Earth-like pan (more rim shift); lower = tighter anchor; `0.0` = a pure anchored window.
+
+**Best for:** a hero object presented *inside* a framed space, or a spatial-reference
+scaffold — a jewel in a box, a grid room, a diorama with a sealed window frame. Draw the
 enclosure in **world space** with its front rim on the glass (`z = 0`) — see how
 `GridRoom.draw` / `Gem.draw_box` are called *before* the scene-anchor translate in
-`app_engine.py`. The shared modelview dolly then carries the whole enclosure forward
-as one rigid space.
+`app_engine.py`. (Note: this style does **not** envelop the viewer — leaning in zooms,
+it does not move you bodily into the room. If you want true envelopment, that is a new
+depth mechanism and a design conversation, not this flag.)
 
-**Guarded by:** `sim_envelop.py` (constant FOV; monotone forward dolly; foreground
-body GROWS on lean-in; lean-out clamps at the bezel-locked floor; rim past the near
-plane when enveloped and bezel-locked at neutral; the merged look — early/wide
-engage, amplitude capped until the rim clears, full once enveloped, monotone + C¹;
-object path untouched).
+**Guarded by:** `sim_envelop.py` (enclosure zoom IS the object telephoto law; a `z = −10`
+body is the same size under both paths and grows on lean-in; the rim is bezel-locked at
+every head-z & eye offset; the look uses the frozen `proximity` gate; enclosure pan =
+object pan × `LOOK_ENCLOSURE_AMP`, ≤ object pan, monotone + C¹; object path uncapped →
+byte-identical).
 
 ---
 
 ## How to choose (decision guide)
 
-| Question | → Method A (object) | → Method B (enclosure) |
+| Question | → Method A (object/open) | → Method B (rim-anchored) |
 |---|---|---|
-| Is the subject **one body** with empty surroundings, or a **space**? | one body | a space (or a body *inside* a space) |
-| On lean-in, should the subject **magnify in place** or should you **move into** the scene? | magnify | move in |
-| Do you want **near-field vertical exploration** (push the body off-screen)? | yes | no |
-| Is there a **front rim / aperture** that should bezel-lock at rest? | no | yes |
+| Does the world have a **front rim / frame** on the glass that should bezel-lock to the screen edges? | no | yes |
+| Is the subject **one body** in empty/atmospheric space, or geometry **inside a framed box**? | one body, open | inside a framed box |
+| Do you want **full near-field look** (push the body off-screen up close)? | yes (full amplitude) | no — the look is capped to protect the rim |
+| Zoom & look-gate timing | telephoto + `proximity(hz, [0.0, 0.8])` | **identical** — same telephoto + same gate |
 | `rendering.enveloping` | `false` (default) | `true` |
 | Geometry drawn at | scene anchor `z = −10` (anchor translate) | world space, front rim on glass `z = 0` (before the anchor translate) |
 | Calibrated guards | `sim_viewing`, `sim_vertical` | `sim_envelop` |
 
-**Rule of thumb:** start with Method A (it is the default and the lower-risk path).
-Reach for Method B only when the experience is *being somewhere* rather than *looking
-at something*. The two are mutually exclusive per world — a world is one or the other.
+**Rule of thumb:** the camera feels the same either way (same zoom, same look
+distances) — choose Method B **only** when the world draws a front rim/frame on the
+glass that must stay bezel-locked, since that is the sole reason to cap the look. With
+no such rim, use Method A and get the full-amplitude look. The two are mutually
+exclusive per world.
 
 ## Authoring a new world with this in mind
 
-1. Decide the model from the table above; set `rendering.enveloping` accordingly.
+1. Decide the style from the table above; set `rendering.enveloping` accordingly.
 2. Method A: anchor the body at `z = −10`; copy [[earth]]/[[the-watcher]] flags.
 3. Method B: draw the enclosure in world space with its rim on the glass (`z = 0`),
-   like [[grid-room]]/[[gem]]; reuse `grid_depth` / `grid_divisions`; expect the
-   forward dolly + envelopment look for free (they are world-agnostic in the engine).
-4. Do **not** add new camera/zoom logic — both models already exist behind the one
-   flag. If a world seems to need a *third* depth behaviour, that is a design
-   conversation (and a new sim guard), not a quiet edit to the frozen core.
+   like [[grid-room]]/[[gem]]; reuse `grid_depth` / `grid_divisions`. You inherit Earth's
+   exact zoom and look gate for free; the engine just caps the pan (`LOOK_ENCLOSURE_AMP`)
+   so the rim doesn't shear.
+4. Do **not** add new camera/zoom logic. If a world genuinely needs a *different* depth
+   behaviour (e.g. true envelopment — moving bodily into a space), that is a design
+   conversation and a new sim guard, not a quiet edit to the frozen core. (The
+   forward-dolly envelopment model was tried and removed — see [[known_issues]].)
 5. Run the sims (at least `sim_envelop` for enclosure worlds; the object guards must
    stay byte-identical). See [[new-world]] / [[headless-simulation]].
 

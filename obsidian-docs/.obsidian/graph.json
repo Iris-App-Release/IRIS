@@ -8,23 +8,58 @@
   "collapse-color-groups": false,
   "colorGroups": [
     {
-      "query": "",
+      "query": "path:worlds  ",
       "color": {
         "a": 1,
-        "rgb": 14048348
+        "rgb": 16755548
+      }
+    },
+    {
+      "query": "path:releases ",
+      "color": {
+        "a": 1,
+        "rgb": 13516864
+      }
+    },
+    {
+      "query": "path:development  ",
+      "color": {
+        "a": 1,
+        "rgb": 13780550
+      }
+    },
+    {
+      "query": "path:handover",
+      "color": {
+        "a": 1,
+        "rgb": 14103347
+      }
+    },
+    {
+      "query": "file:productification",
+      "color": {
+        "a": 1,
+        "rgb": 832256
+      }
+    },
+    {
+      "query": "path:systems  ",
+      "color": {
+        "a": 1,
+        "rgb": 8300795
       }
     }
   ],
   "collapse-display": true,
   "showArrow": false,
-  "textFadeMultiplier": 0,
-  "nodeSizeMultiplier": 1,
-  "lineSizeMultiplier": 1,
+  "textFadeMultiplier": -3,
+  "nodeSizeMultiplier": 1.54830729166667,
+  "lineSizeMultiplier": 1.23674045138889,
   "collapse-forces": false,
-  "centerStrength": 0.518713248970312,
+  "centerStrength": 0,
   "repelStrength": 20,
   "linkStrength": 1,
   "linkDistance": 500,
-  "scale": 1.674674106329815,
+  "scale": 0.6698822223534447,
   "close": true
 }

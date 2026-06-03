@@ -16,6 +16,16 @@ never have to be re-derived from chat history or source again.
 
 ## [RESOLVED 2026-06-02] Enclosure zoom felt wrong: grid stretched/deepened and the gem SHRANK on lean-in; the ~15 cm look distorted the grid
 
+> [!warning] SUPERSEDED (2026-06-02, final revert) — the **forward dolly** described in
+> this entry was REMOVED. The user asked that the grid worlds' zoom and look operate
+> EXACTLY like the sphere worlds (so the gem appears the same size as Earth at any
+> distance), anchored. Enclosures now use Earth's telephoto `cz` and the frozen
+> `proximity(hz)` gate; the *only* enclosure difference is a single look-amplitude cap
+> `LOOK_ENCLOSURE_AMP = 0.35` that protects the bezel-locked rim from shearing. There is
+> no `dolly`, no `DOLLY_*`, and no `engage·amp` look split any more. See the
+> "revert+resimplify" entry in [[log]], [[viewing-models]], [[constraints]] and
+> [[what-makes-perspective-optimal]]. Read the rest of this entry only as history.
+
 **Symptom.** In the Grid Room and the Gem world, leaning IN made the grid squares
 *expand and stretch* (perceived depth roughly doubled) and the floating gem get
 *smaller* — the opposite of the intended "move in = zoom in." The object of

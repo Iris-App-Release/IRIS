@@ -19,8 +19,8 @@ and one utility/calibration (The Grid Room).
 |---|---|---|---|---|
 | Display name | Earth | The Watcher | The Gem | Grid Room |
 | Use case | scenic destination | scenic destination | scenic + jewel focus | spatial reference / calibration |
-| [[viewing-models\|Viewing model]] | object / telephoto | object / telephoto | enclosure / forward-dolly | enclosure / forward-dolly |
-| `enveloping` | `false` | `false` | `true` | `true` |
+| [[viewing-models\|Viewing model]] | object / open (telephoto) | object / open (telephoto) | enclosure / rim-anchored (telephoto) | enclosure / rim-anchored (telephoto) |
+| `enveloping` (caps the look so the bezel rim doesn't shear; zoom + gate identical to Earth) | `false` | `false` | `true` | `true` |
 | `primary_mesh` | `earth` | `eye` | `gem` | `room` |
 | Renderer class | `Earth` + `Stars` + `Nebula` + `IconOrbit` | `Eye` | `Gem` | `GridRoom` |
 | Shader used | yes (Earth/Star/Nebula) | yes (Eye) | yes (Gem) | **none** (fixed-function `GL_LINES`) |

@@ -92,29 +92,24 @@ Unlike Earth (five textures) and The Watcher (three procedural textures), The Ge
 
 ## Integration with head tracking and projection
 
-The gem uses the **identical** camera math and head-tracking pipeline as every other world — only the per-world *distance/rotation policy* differs:
+The gem uses the **identical** camera math, parallax, zoom and head-tracking pipeline as the [[earth]] object world — by design, as of **2026-06-02 (final)**:
 
 - [[off-axis-projection]] `off_axis_frustum` + `view_matrix` set per frame from the head 5-tuple.
-- [[head-tracking]] `hx`, `hy`, `hz`, `yaw`, `pitch` drive the window parallax, zoom, and proximity-gated rotation.
-- **Enclosure viewing model (`enveloping: true`).** Because the gem lives *inside*
-  a checkered box (shared with [[grid-room]]), it opts into the enclosure policy:
-  leaning IN **dollies the camera forward into the box** rather than zooming a lens.
-  The eye-to-glass distance is held at `BASE_Z` (FOV constant at 58° — no zoom
-  trick) and the scene is translated toward the eye by `dolly` along −z
-  (`DOLLY_GAIN = 15.5`), so the **floating gem grows with honest perspective** as you
-  approach (≈3.6× larger at full lean) and the checker walls slide past until the
-  front rim clears the screen (enveloped). The rotational look is **merged toward the
-  Earth feel (2026-06-02)**: it engages early and wide like the object world
-  (`prox = engage(hz)·amp(hz)`, `engage = proximity(hz, [0.35, 1.0])`) so rotation
-  blends with the dolly across the approach, but its **amplitude is capped to ~22 %
-  while the front rim is still on screen** (`amp` ramps to full as the rim clears the
-  near plane at hz ≈ 0.72, derived from `DOLLY_GAIN`). So the gem world gains Earth's
-  blended eye-looking while keeping its bezel-locked rim — the early look can't shear
-  a still-visible checker edge. See [[off-axis-projection]] / [[viewing-models]] /
-  [[what-makes-perspective-optimal]] / [[constraints]]; pinned by `sim_envelop.py`.
-  *(This is the "take the good parts of both worlds" merge. It supersedes the earlier
-  same-day `[0.75, 1.0]` "look only once enveloped" gate, which itself replaced a
-  frustum-widening model that made the gem shrink on approach.)*
+- [[head-tracking]] `hx`, `hy`, `hz`, `yaw`, `pitch` drive the window parallax, telephoto zoom, and proximity-gated rotation — exactly as for Earth.
+- **Same zoom, same size as Earth.** Leaning IN telephotos the eye back
+  (`cz = BASE_Z·e^(+ZOOM_K·hz)`) just like Earth, so the gem at the z = −10 anchor
+  subtends the **same on-screen size the Earth would** at any head-z — initially and
+  at full lean-in. *(An earlier 2026-06-02 model instead held `cz` constant and dollied
+  the scene forward into the box, growing the gem ~3.6× and diverging from Earth's
+  size; the user rejected it, so the forward dolly was removed.)*
+- **Enclosure flag (`enveloping: true`) — the one difference: a capped look.** Because
+  the gem floats inside a checkered box whose front rim sits on the glass at z = 0
+  (bezel-locked, shared with [[grid-room]]), a full pan would shear that visible rim.
+  So the look uses Earth's frozen `om.proximity(hz)` ([0.0, 0.8]) gate (same distances,
+  same smoothness) but the pan amplitude is scaled by `LOOK_ENCLOSURE_AMP = 0.35` — a
+  gentle, bounded look that keeps the checker rim anchored. See [[off-axis-projection]]
+  / [[viewing-models]] / [[what-makes-perspective-optimal]] / [[constraints]]; pinned by
+  `sim_envelop.py`.
 - The gem's own spin is a model transform (inside the anchor push/pop); it does not touch the camera or frustum.
 
 No new tracking pipeline, no new camera code, no new post-processing.

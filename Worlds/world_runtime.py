@@ -136,19 +136,19 @@ class WorldRuntime:
 
     @property
     def enveloping(self) -> bool:
-        """Forward-dolly depth model for ENCLOSURE worlds (Grid Room, Gem box).
-        When True the engine holds the eye-to-glass distance at BASE_Z (FOV
-        constant — no lens zoom) and instead dollies the scene toward the eye along
-        −z as the viewer leans in, so the camera moves INTO the room: the object of
-        interest grows with honest perspective and the front rim slides off-screen
-        until enveloped. The rotational 'look' is MERGED toward the Earth feel: it
-        engages early and wide (blended with the dolly) but its amplitude is capped
-        while the front rim is still on screen, ramping to full only once the rim
-        clears — so the early look never shears a still-visible grid edge. Default
-        OFF → object worlds (Earth, The Watcher) keep telephoto zoom + the frozen
-        proximity gate, byte-identical. See [[off-axis-projection]],
-        [[what-makes-perspective-optimal]] and the per-world depth-response +
-        enclosure-look blocks in app_engine.py."""
+        """Marks a RIM-ANCHORED ENCLOSURE world (Grid Room, Gem) that draws a front
+        rim on the glass at world z = 0. Such worlds use the EXACT same camera physics
+        as the object worlds — telephoto zoom AND the frozen proximity look-gate
+        ([0.0, 0.8]) — so the grid zooms and the look fades in over the same head-z
+        distances as Earth, and a body at the Earth anchor (z = −10) subtends the same
+        on-screen size Earth would. The ONLY difference: the rotational look AMPLITUDE
+        is capped (LOOK_ENCLOSURE_AMP in app_engine.py) so panning never shears the
+        bezel-locked rim — the grid stays anchored to the screen edges. Default OFF →
+        object worlds (Earth, The Watcher) are uncapped, byte-identical. (The earlier
+        forward-dolly 'move into the room' depth model this flag once selected was
+        removed 2026-06-02; see [[off-axis-projection]],
+        [[what-makes-perspective-optimal]] and the enclosure-look block in
+        app_engine.py.)"""
         return bool(self.rendering.get("enveloping", False))
 
     @property

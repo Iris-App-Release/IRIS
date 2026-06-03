@@ -8,18 +8,21 @@ last_updated: 2026-06-02
 
 # What Makes Perspective Optimal
 
-> [!success] Implemented 2026-06-02 — the grid + sphere merge shipped
-> This page's central proposal is now **live in the engine**. The enclosure worlds
-> ([[grid-room]], [[the-gem]]) adopt the Earth world's **early, wide, blended**
-> rotational look (the "good part of the sphere worlds") while keeping their
-> **bezel-locked screen anchor** (the "good part of the grid worlds"). The rim-shear
-> barrier is resolved with the **amplitude-gated** path (option 4 / §"core insight"
-> below): the look engages early but its *amplitude* is capped while the front rim is
-> still on screen, ramping to full only once enveloped. Mechanism, exact constants,
-> and the new invariants are in `Launcher/app_engine.py` (the `LOOK_*` block) and
-> pinned by `Scripts/validation/sim_envelop.py`. See the bottom of this page for the
-> shipped design and what still needs a live-feel pass. (log: 2026-06-02 "grid+sphere
-> merge".)
+> [!success] Implemented 2026-06-02 (final form) — enclosures use Earth's EXACT camera, with a capped look
+> This page's central question — *how do enclosures get the sphere worlds' feel without
+> shearing their anchored rim* — is resolved in the engine by **option 3** (the hybrid
+> gate, §"Barriers" below). The path went through two intermediate designs (a
+> frustum-widen, then a **forward dolly + merged engage·amp look**) that both made the
+> grid worlds *diverge* from Earth; the user rejected them and asked for the grid worlds
+> to behave **exactly** like the sphere worlds, anchored. Final shipped form:
+> the enclosure worlds ([[grid-room]], [[the-gem]]) use the **identical telephoto zoom
+> and the identical frozen proximity look-gate ([0.0, 0.8])** as [[earth]] — so they
+> zoom the same, the look fades in over the same head-z distances, and a body at the
+> Earth anchor subtends the same on-screen size Earth would. The **only** difference is
+> a single constant, `LOOK_ENCLOSURE_AMP = 0.35`, that caps the look *amplitude* so the
+> bezel-locked rim never shears ("just limit the distance I can look/pan in the grids").
+> Mechanism in `Launcher/app_engine.py` (the `LOOK_ENCLOSURE_AMP` block); pinned by
+> `Scripts/validation/sim_envelop.py`. (log: 2026-06-02 "revert+resimplify".)
 
 ## The Earth world is smooth because translation and rotation COEXIST
 
@@ -29,11 +32,11 @@ In [[earth]], the user experiences a **convergent band** where translation (para
 
 | Dimension | Earth (object world) | Enclosure (Grid Room / Gem) |
 |---|---|---|
-| **Eye distance model** | Telephoto: eye recedes as you lean in (`cz = BASE_Z·e^(+ZOOM_K·hz)`) | Forward dolly: camera moves into the room (`dolly = DOLLY_GAIN·hz`, `cz = constant`) |
-| **Rotation gate** | `om.proximity(hz, lo=0.0, hi=0.8)` — opens early, ramps smoothly | **(merged 2026-06-02)** `engage(hz)·amp(hz)`: `engage = proximity(hz, [0.35, 1.0])` opens early + wide like Earth; `amp` caps amplitude to 0.22 while the rim is visible, ramping to 1.0 as it clears. *(Was `proximity(hz, [0.75, 1.0])` — held off until nearly enveloped.)* |
-| **At neutral (hz = 0)** | Eye at BASE_Z, far from the object; rotation gate ≈ 0 (minimal) | Rim bezel-locked; `engage(0) = 0` → no rotation (anchor preserved) |
-| **Leaning in (hz → +1)** | Eye recedes (cz grows), object zooms; rotation gate smoothly ramps 0 → 1 → both active **across a wide band** | Dolly increases; rotation engages early (from hz ≈ 0.35) blended with the dolly, but at *capped amplitude* until the rim clears (hz ≈ 0.72), then ramps to full — **active across a wide band, like Earth** |
-| **The critical difference** | **Rotation becomes significant WHILE translation still dominates** → blended feel | **(now)** Same blended band, with the early portion amplitude-limited so the still-visible grid never shears → **blended feel + bezel anchor** |
+| **Eye distance model** | Telephoto: eye recedes as you lean in (`cz = BASE_Z·e^(+ZOOM_K·hz)`) | **Identical** — same telephoto `cz = BASE_Z·e^(+ZOOM_K·hz)`. *(Was a forward dolly; removed 2026-06-02 because it grew the gem ~3.6× and diverged from Earth's size.)* |
+| **Rotation gate** | `om.proximity(hz, lo=0.0, hi=0.8)` — opens early, ramps smoothly | **Identical** — the same frozen `om.proximity(hz, [0.0, 0.8])` gate, so the look fades in over the same head-z distances. *(Was `engage·amp`; collapsed back to Earth's gate.)* |
+| **At neutral (hz = 0)** | Eye at BASE_Z, far from the object; rotation gate ≈ 0 (minimal) | Rim bezel-locked; gate ≈ 0 → look ≈ 0 (anchor preserved exactly) |
+| **Leaning in (hz → +1)** | Eye recedes (cz grows), object zooms; rotation gate smoothly ramps 0 → 1 → both active **across a wide band** | Same telephoto zoom + same gate ramp, so the look grows over the same band — but the look pan is multiplied by `LOOK_ENCLOSURE_AMP = 0.35` so it stays small enough that the bezel rim doesn't shear |
+| **The only difference** | Full-amplitude pan (`prox · ROT_MAX`) | Capped pan (`prox · ROT_MAX · 0.35`) → bezel anchor holds while exploring |
 
 The Earth user can:
 1. **Lean in far away** (hz ≈ 0.3) and rotate gently — the translation (zoom) is still strong, rotation is light but present.
@@ -50,47 +53,45 @@ In enclosure worlds, rotation cannot engage until **the front rim (world z = 0) 
 - If the front rim is still on-screen (visible), panning **shears the rim** — it distorts as it rotates, reading as visual glitch, not intentional.
 - Once the rim is off-screen (enveloped), rotation is clean: you're looking *around* inside the box, not distorting the visible boundary.
 
-This *used to* force the rotation gate to defer until dolly had carried the rim far past the near plane (the old `[0.75, 1.0]` gate — a hard separation, not a blend).
+**Resolution (2026-06-02, final).** With the telephoto zoom restored (the dolly gone),
+the rim never leaves the screen — it stays bezel-locked at z = 0 at *every* distance.
+So the rim cannot be "cleared" before looking; instead the look **amplitude is capped**
+(`LOOK_ENCLOSURE_AMP = 0.35`) so that any pan is small enough that the rim's on-screen
+shift reads as a subtle parallax-like settle rather than a warp. Combined with the
+(unchanged) proximity gate, the pan is ≈ 0 at rest — the rim is rock-solid anchored —
+and grows to a small bounded max as you lean in.
 
-**Resolution (2026-06-02 merge).** Two facts let the gate open early without shear:
-1. The bezel-locked rim leaves the *screen* the instant the dolly starts (it expands
-   past the screen edges by hz ≈ 0.02 — verified numerically), long before the look
-   engages at hz ≈ 0.35. So during its on-screen exit the look is still exactly zero;
-   the rim never shears on its way out.
-2. After that, the only still-visible geometry that *could* shear is the receding
-   interior grid — and the **amplitude cap** (look limited to ~22 % until the rim
-   clears the near plane at hz ≈ 0.72) keeps that pan gentle, so it reads as a slight
-   parallax-like settle, not a warp. Full-strength look only arrives once enveloped.
-
-**Result (now):** translation and rotation **coexist across a wide band** (hz ∈
-[0.35, 1.0]) just like Earth — a smooth blend — while the resting rim stays exactly
-bezel-locked. The sequential hand-off is gone.
+**Result (now):** translation (zoom) and rotation (a gentle, capped look) **coexist
+across the same wide band** (hz ∈ [0.0, 0.8]) and over the same distances as Earth,
+while the resting rim stays exactly bezel-locked. The sequential hand-off — and the
+gem-ballooning forward dolly — are both gone.
 
 ---
 
 ## The optimal enclosure would look like Earth — ✅ now achieved (2026-06-02)
 
-The merge delivers exactly this list. Opening rotation earlier *while keeping the rim
-clean* now gives the user:
+The final design delivers exactly this list — by simply *being* Earth's camera, with a
+capped look:
 
-1. **The bezel-locked grid** — the resting framing at neutral (hz = 0) is pinned to the screen edges, aesthetically "sealed."
-2. **Early rotation availability** — like Earth, rotation becomes significant while the user is still leaning in translationally.
-3. **Smooth blended exploration** — translation and rotation coexist in a convergent band, neither a sharp hand-off.
-4. **No grid shear** — the rim stays off-screen or is designed to read correctly while rotating.
+1. **The bezel-locked grid** — the resting framing at neutral (hz = 0) is pinned to the screen edges, aesthetically "sealed." The rim stays pinned at *every* distance now (telephoto keeps z = 0 on the screen edges; nothing carries it off).
+2. **Same zoom, same size as Earth** — the gem subtends the on-screen size Earth would, initially and at full lean-in (shared telephoto `cz`).
+3. **Same look timing** — rotation fades in over Earth's exact [0.0, 0.8] band, at the same distances, just as smoothly.
+4. **No grid shear** — the look amplitude is capped (`LOOK_ENCLOSURE_AMP`) so the still-visible rim's on-screen shift stays a gentle settle, not a warp.
 
-### Barriers and possible paths forward
+### Barriers and possible paths forward (the chosen path: option 3)
 
-**The rim-shear barrier:**
-- Rotating while the rim is visible *will* distort it — that's geometry, not a bug.
-- Solutions:
-  1. **Accept small shear as aesthetic:** The rim might read as "dynamic grid movement," not distortion, if it's fast and smooth enough. The user would live-test this.
-  2. **Redesign the front boundary:** Instead of a hard edge at z = 0, fade or blur the rim so small distortions read as depth-of-field or parallax. Less "sealed," but avoids the shear read.
-  3. **Hybrid gate:** Open rotation earlier but only at low amplitude — the pan is tiny until the rim is fully gone, so shear is imperceptible. This is closest to the current design's intent.
-  4. **Lower the rotation gate threshold below the rim-clear point:** Accept that geometry will shear the rim slightly, live-test to see if it's tolerable, and recalibrate based on feel.
+**The rim-shear barrier** — rotating while the rim is visible *will* distort it; that's
+geometry, not a bug. Once the dolly was removed (so the rim is always on-screen at the
+bezel), the only viable resolution that keeps the rim anchored is to bound the pan:
 
-**The dolly timing barrier:**
-- The faster you dolly in (higher `DOLLY_GAIN`), the sooner the rim clears — but also, the faster the foreground object grows. A slower dolly keeps the exploration phase longer but delays envelopment.
-- Balancing `DOLLY_GAIN` against `ROT_GATE_LO` is the live-tuning knob. They move together: lower the gate (earlier rotation), raise the gain (rim clears sooner).
+  1. **Accept small shear as aesthetic** — read the rim shift as "dynamic grid movement." Not chosen.
+  2. **Redesign the front boundary** (fade/blur the z = 0 edge). Not needed.
+  3. **Hybrid gate: open rotation early but only at low amplitude** — the pan is small so shear is imperceptible. ✅ **This is the shipped path** (a constant amplitude cap, since with the telephoto restored the rim is never "fully gone" to un-cap against — it's always at the bezel). This was the user's explicit pick: *"just limit the amount of distance I can look/pan in the grids."*
+  4. **Lower the gate below a rim-clear point and accept slight shear.** Not chosen.
+
+*(The earlier "dolly timing barrier" — balancing `DOLLY_GAIN` against the gate so the
+rim cleared before looking — is moot: there is no dolly any more. The only live knob is
+`LOOK_ENCLOSURE_AMP`.)*
 
 ---
 
@@ -101,50 +102,45 @@ Earth feels optimal because its **proximity gate is continuous, wide, and opens 
 - The smoothstep is C¹ — zero slope at the endpoints, max slope of 1.5/(0.8) ≈ 1.875 at the midpoint. **Imperceptible blend.**
 - Rotation is *always on* to some degree; it just scales with proximity.
 
-Enclosures *used to* use a **shorter, later gate** (`om.proximity(hz, lo=0.75,
-hi=1.0)` — rotation only across a 0.25-unit band, starting when nearly enveloped;
-off for most of the approach, then on abruptly).
+Enclosures went through two rejected gates — a late sequential one
+(`om.proximity(hz, [0.75, 1.0])`) and then a merged `engage·amp` split — before
+landing on the simplest answer.
 
-**The shipped merge (2026-06-02) gives enclosures Earth's gate** by splitting the
-single weight into engagement × amplitude:
-1. **Opens much earlier and wider** — `engage = proximity(hz, [0.35, 1.0])`, a
-   0.65-unit band that mirrors Earth's [0.0, 0.8]. Rotation is available while the
-   dolly (translation) still dominates → the blended feel.
-2. **The rim constraint is satisfied by amplitude-gating, not deferral** — the early
-   look runs at a capped ~22 % amplitude until the rim clears the near plane (hz ≈
-   0.72), then ramps to full. The residual motion of the still-visible interior grid
-   is therefore tiny → imperceptible shear (this is option 4 below, made concrete).
-   `amp = 0.22 + 0.78·proximity(hz, [0.72, 0.92])`; the un-cap point is *derived* from
-   `DOLLY_GAIN` so it always tracks the actual rim clear.
+**The shipped form (2026-06-02) gives enclosures Earth's gate by literally using it:**
+`prox = om.proximity(hz)` — the same `[0.0, 0.8]` band, the same C¹ smoothstep, opening
+early from the far field. The pan target is then multiplied by a single constant,
+`LOOK_ENCLOSURE_AMP = 0.35`, before smoothing:
 
-Both factors are smoothstep, so the product is monotone and C¹ — no felt mode switch.
+```
+prox        = om.proximity(hz)              # identical to Earth
+yaw_target  = yaw   * ROT_MAX_RAD       * prox
+pitch_tgt   = pitch * ROT_MAX_PITCH_RAD * prox
+if world.enveloping:                        # enclosure → cap the pan
+    yaw_target *= LOOK_ENCLOSURE_AMP
+    pitch_tgt  *= LOOK_ENCLOSURE_AMP
+```
+
+`prox · cap` is a smoothstep × constant → monotone, C¹, zero at the far field. So the
+rim is rock-solid at rest and gains only a small, bounded pan as the viewer leans in.
 
 ---
 
 ## What shipped, and what still needs a live-feel pass
 
-**Shipped (2026-06-02):** option 4 below — the **hybrid amplitude-gate** — was chosen
-and implemented, because it gives the Earth-like early/wide blend *and* keeps the
-bezel anchor with no rim redesign and no accepted shear. Constants landed at
-`LOOK_ENGAGE_LO = 0.35`, `LOOK_PRELOOK_AMP = 0.22`, amplitude un-cap derived from
-`DOLLY_GAIN` (≈ hz 0.72 → 0.92). All 10 headless sims pass; object worlds byte-identical.
+**Shipped (2026-06-02, final):** option 3 — the **hybrid gate (early rotation, capped
+amplitude)** — but in its simplest possible form: the enclosure worlds reuse Earth's
+exact telephoto zoom and Earth's exact `om.proximity(hz)` gate, and apply a single
+constant pan cap `LOOK_ENCLOSURE_AMP = 0.35`. This was chosen over the earlier forward-
+dolly + `engage·amp` merge because the user wanted the grid worlds to be *identical* to
+the sphere worlds (same zoom, same look distances, gem the same size as Earth), anchored
+— not a separate "enter the room" mechanism. All 10 headless sims pass; object worlds
+byte-identical.
 
-The four options that were on the table (kept for the record):
-1. ~~Open the gate at hz = 0.5/0.6 with a wider ramp and accept whatever shear results.~~
-2. ~~Lower the gate + recalibrate `DOLLY_GAIN` so the rim still fully clears *first*.~~
-   *(This was the prior model's invariant; the merge intentionally relaxes "rim
-   fully clear before any look" in favour of amplitude-gating.)*
-3. ~~Redesign the front rim (fade/blur/inner border) to hide shear.~~ — not needed.
-4. **Hybrid amplitude-gate — only open rotation to ~20–30 % amplitude until the rim
-   clears, then ramp to full.** ✅ **shipped.**
-
-**Still needs a human in the room (live-feel calibration only — code knobs are ready):**
-- Tune `LOOK_ENGAGE_LO` (how far out the look starts; lower = more Earth-like) and
-  `LOOK_PRELOOK_AMP` (how much pre-envelopment look is allowed) against real feel.
-- Confirm the capped early pan reads as a gentle parallax settle, not a warp, on the
-  receding interior grid. If it's too lively, lower `LOOK_PRELOOK_AMP`; if too dead,
-  raise it (or lower `LOOK_ENGAGE_LO`). The sim bounds the geometry; the *threshold*
-  of perception is the human's call.
+**Still needs a human in the room (live-feel calibration — one knob):**
+- Tune `LOOK_ENCLOSURE_AMP` against real feel: raise toward 1.0 for a more Earth-like
+  full pan (more rim shift near full lean-in); lower for a tighter anchor; `0.0` is a
+  pure anchored window with no look. The sim bounds the geometry; the *threshold* of
+  perception is the human's call.
 
 ---
 
@@ -152,4 +148,4 @@ The four options that were on the table (kept for the record):
 
 The user's instinct was correct: **the smoothness of exploration is determined by how much of the proximity band is active translation vs. rotation.** Earth's [0.0, 0.8] overlap is what makes it feel like you're *moving around the object.* The enclosures' old delayed gate [0.75, 1.0] made them feel like *first you move in, then you look around* — two phases, not one motion.
 
-The merge took the **third option — amplitude-gate early rotation so the shear is invisible** — so the enclosures now get the single integrated motion *and* keep their bezel anchor. The first two options (relax the rim constraint and accept shear; or keep the sequential hand-off) were rejected. The remaining work is pure live-feel calibration of the `LOOK_*` knobs — the geometry and invariants are settled and guarded by `sim_envelop.py`; the perception threshold needs a human in the room.
+The final design takes the **third option — early rotation at capped amplitude so the shear is imperceptible** — but reaches it the simplest way: the enclosures just *are* the Earth camera (same zoom, same gate, same distances, gem the same size), with one constant capping the pan so the bezel anchor survives. The forward-dolly "enter the room" depth model was tried and rejected because it made the gem balloon and diverge from Earth's size. The remaining work is pure live-feel calibration of the single `LOOK_ENCLOSURE_AMP` knob — the geometry and invariants are settled and guarded by `sim_envelop.py`; the perception threshold needs a human in the room.

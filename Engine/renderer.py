@@ -1154,10 +1154,11 @@ class GridRoom:
         t = min(1.0, max(0.0, (-z) / depth)) if depth > 1e-6 else 0.0
         return self._A_FRONT + (self._A_BACK - self._A_FRONT) * t
 
-    def _rebuild(self, half_w, half_h, depth, divisions, color) -> None:
+    def _rebuild(self, half_w, half_h, depth, divisions, color, behind_cells=0) -> None:
         v, c = [], []
         r, g, b = color
-        D = max(1, int(divisions))
+        D  = max(1, int(divisions))
+        BC = max(0, int(behind_cells))
 
         def line(p0, p1, a0=None, a1=None):
             a0 = self._alpha_at(p0[2], depth) if a0 is None else a0
@@ -1186,6 +1187,39 @@ class GridRoom:
                ( half_w,  half_h, 0.0), (-half_w, half_h, 0.0)]
         for i in range(4):
             line(rim[i], rim[(i + 1) % 4], self._A_RIM, self._A_RIM)
+
+        # ── Behind-camera wrap: BC cells extending into positive z ────────────
+        # These lines sit between the glass (z=0) and the camera (z=cz). At rest
+        # they live at/beyond the viewport edges and are mostly clipped. When the
+        # proximity-gated pan engages they sweep into view, giving the impression
+        # the room wraps around the viewer and masking the z=0 rim shear so a
+        # higher LOOK_ENCLOSURE_AMP looks clean. Alpha fades 0.45→0 from z=0→+bd.
+        if BC > 0:
+            cell_z = depth / D
+            bd     = BC * cell_z      # total behind extent (positive z)
+            A_B    = 0.45             # alpha at z=0 for behind lines
+
+            def ba(zp: float) -> float:
+                return A_B * max(0.0, 1.0 - zp / bd)
+
+            # Transverse cross-sections at z = cell_z, 2·cell_z, …, bd.
+            # (Skip z=0 — the forward section already draws lines there.)
+            for i in range(1, BC + 1):
+                zp = cell_z * i
+                a  = ba(zp)
+                line((-half_w, -half_h, zp), (half_w, -half_h, zp), a, a)   # floor
+                line((-half_w,  half_h, zp), (half_w,  half_h, zp), a, a)   # ceiling
+                line((-half_w, -half_h, zp), (-half_w, half_h, zp), a, a)   # left
+                line(( half_w, -half_h, zp), ( half_w, half_h, zp), a, a)   # right
+
+            # Longitudinal edges from z=0 to z=+bd.
+            a0, a1 = ba(0.0), ba(bd)
+            for x in xs:
+                line((x, -half_h, 0.0), (x, -half_h, bd), a0, a1)   # floor
+                line((x,  half_h, 0.0), (x,  half_h, bd), a0, a1)   # ceiling
+            for y in ys:
+                line((-half_w, y, 0.0), (-half_w, y, bd), a0, a1)   # left
+                line(( half_w, y, 0.0), ( half_w, y, bd), a0, a1)   # right
 
         self._v = np.array(v, dtype=np.float32)
         self._c = np.array(c, dtype=np.float32)

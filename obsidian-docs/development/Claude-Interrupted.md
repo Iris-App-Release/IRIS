@@ -9,6 +9,37 @@ When resuming work:
 3. Promote confirmed discoveries into the appropriate permanent documentation.
 4. Remove or archive resolved entries once their knowledge has been incorporated elsewhere.
 
+2026-06-2: Done. Everything validates and I confirmed your hard constraint: **Earth and The Watcher are untouched** — their `world.json` files are unchanged and the object code path is byte-identical (`sim_viewing` + `sim_vertical`, which pin Earth's feel, pass unchanged).
+
+## What I changed
+
+I reverted the divergent enclosure machinery and made the grid worlds _be_ Earth's camera. The code got **127 lines simpler**.
+
+**Removed** (the stuff that made grids differ from spheres):
+
+- The **forward dolly** depth model — this is what ballooned the gem ~3.6× and made its size diverge from Earth's.
+- The **`engage·amp` split look gate** and all the `DOLLY_*` / `LOOK_ENGAGE/PRELOOK/AMP` constants.
+
+**Now, every world uses the identical camera:**
+
+- **Zoom** → Earth's telephoto `cz = BASE_Z·e^(+ZOOM_K·hz)`. A body at the z=−10 anchor subtends the same on-screen size in every world, at every distance.
+- **Look gate timing** → Earth's frozen `om.proximity(hz)` over `[0.0, 0.8]` — so the rotational exploration transitions in over the _same exact distances_, just as smoothly.
+
+**The one difference** (option 3, the hybrid gate you pointed to): for `enveloping` worlds the look pan is multiplied by a single constant `LOOK_ENCLOSURE_AMP = 0.35`. Because it rides the proximity gate, the pan is **≈0 at rest** (rim rock-solid) and grows to a small bounded max only as you lean in — so you're naturally "in the room" before you can look, and the bezel rim never shears.
+
+**The anchor is automatic and exact:** the front rim is drawn at world z=0, which the off-axis projection pins to the screen edges at _any_ eye position or zoom. The sim verifies it stays bezel-locked to machine precision (4.6e-13px) at **every** head-z — no longer just at neutral, since nothing carries it off-screen anymore.
+
+I rewrote `sim_envelop.py` to pin these new invariants, and updated the 11 wiki docs that described the removed model. **All 10 headless sims pass.**
+
+## Two things for you
+
+1. **One live-tune knob.** [`LOOK_ENCLOSURE_AMP = 0.35`](https://claude.ai/epitaxy/Launcher/app_engine.py:227) is the only thing to feel out: toward 1.0 = more Earth-like pan (more rim shift near full lean-in); lower = tighter anchor; `0.0` = pure anchored window. The geometry is settled — this is purely your perception call. You'll want to run it and nudge.
+    
+2. **Gem absolute size.** The size _response_ now matches Earth exactly. But the gem's girdle radius is 2.2 vs Earth's surface 2.6, so it renders at ~85% of Earth's footprint (a deliberate artistic value, "matched to Earth's approximate footprint"). If you want it _pixel-identical_ to Earth, that's a one-line radius bump in the `Gem` mesh — say the word and I'll match it.
+    
+
+I haven't committed anything — these are working-tree changes so you can see the live feel first. Want me to launch it to verify, or commit once you've tried it?
+
 > **[RESOLVED 2026-06-02]** Resumed and completed. Tier 1 items 1 & 2 (predictive
 > tracking + 1€ jitter filter) are implemented, validated (all 8 headless sims pass),
 > and the durable record is promoted to [[(26-06-1) -decision-speed-upgrade]]

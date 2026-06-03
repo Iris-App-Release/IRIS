@@ -11,39 +11,44 @@ sources: [Tracking/face_tracker.py, Launcher/app_engine.py, Engine/renderer.py, 
 What's actively being worked on right now. Keep this short — move durable
 conclusions into the relevant system page and bug records into [[known_issues]].
 
-## Grid + sphere merge — enclosures get Earth's blended look + keep their anchor — DONE (2026-06-02)
+## Grid worlds use Earth's EXACT camera (telephoto zoom + frozen gate); only the look is capped to anchor the rim — DONE (2026-06-02, final)
 
-Decision: **take the good parts of both worlds.** The [[earth]] (sphere/object) world
-has the better *eye-looking* — rotation and translation coexist across a wide
-proximity band, so it feels like moving around the scene. The enclosure worlds
-([[grid-room]], [[the-gem]]) have the better *screen anchor* — the bezel-locked front
-rim. Previously enclosures deferred all rotation until nearly enveloped
-(`proximity(hz, [0.75, 1.0])`), giving a sequential "first move in, then look around"
-feel. The merge gives them Earth's early/wide look **without** losing the anchor.
+Decision (user, emphatic): the grid worlds' **zoom and look should operate EXACTLY like
+the sphere worlds** — the rotational exploration transitions over the same head-z
+distances, and the gem appears the same size as Earth would at the same distance,
+initially and at full lean-in — *but* the grid stays anchored to the bezel. This
+**reverts the two intermediate enclosure models** below (the forward dolly + the
+engage·amp merge): both made the grid worlds diverge from Earth (the dolly grew a hero
+object ~3.6×), which the user rejected.
 
-- **Mechanism (consuming layer only).** The single enclosure look weight is split
-  into `prox = engage(hz)·amp(hz)`: `engage = proximity(hz, [LOOK_ENGAGE_LO,
-  LOOK_ENGAGE_HI] = [0.35, 1.0])` opens early/wide like Earth; `amp = LOOK_PRELOOK_AMP
-  + (1−LOOK_PRELOOK_AMP)·proximity(hz, [LOOK_AMP_LO, LOOK_AMP_HI])` caps the look
-  amplitude to **0.22** while the rim is on screen and ramps to full as the rim clears
-  the near plane. `LOOK_AMP_LO` is *derived* from `DOLLY_GAIN` (≈ hz 0.72) so cap
-  release always tracks the actual rim clear. Both factors are smoothstep ⇒ monotone
-  + C¹.
-- **Why it's shear-free.** The bezel-locked rim leaves the *screen* the instant the
-  dolly starts (hz ≈ 0.02, verified) — long before the look engages at 0.35 — so it
-  never shears on its way out; and the amplitude cap keeps the receding interior grid
-  gentle during partial envelopment. Full-strength look only once enveloped. This is
-  the **amplitude-gated** path proposed in [[what-makes-perspective-optimal]].
-- **Object worlds untouched** — they keep the frozen `proximity(hz)` gate ([0.0,
-  0.8]) and never amplitude-cap; `sim_viewing` / `sim_vertical` / `sim_offaxis` /
-  `sim_orbit` are byte-identical. **`camera_math.py` untouched** (all lo/hi are
-  `proximity()` args). `sim_envelop.py` rewritten to pin the merged invariants
-  (early/wide engage; amplitude capped until rim clear; full + significant once
-  enveloped; monotone + C¹; object path untouched). **All 10 sims pass.**
-- **Files.** `Launcher/app_engine.py` (LOOK_* block + per-world prox),
-  `Worlds/world_runtime.py` (`enveloping` docstring), `Scripts/validation/sim_envelop.py`.
-- **Next:** live GUI pass to calibrate `LOOK_ENGAGE_LO` / `LOOK_PRELOOK_AMP` against
-  feel (geometry + invariants are settled; the perception threshold needs a human).
+- **Mechanism (consuming layer only; the simplest possible form).** Removed the
+  per-world depth branch + the `DOLLY_*` constants + the modelview dolly: every world now
+  uses telephoto `cz = BASE_Z·e^(+ZOOM_K·hz)`. Removed the `engage·amp` split + the
+  `LOOK_ENGAGE/PRELOOK/AMP` constants: every world now uses the frozen `om.proximity(hz)`
+  ([0.0, 0.8]) gate. The **only** enclosure difference is one constant —
+  `LOOK_ENCLOSURE_AMP = 0.35` — multiplied into the look pan for `enveloping` worlds, so
+  the bezel-locked rim (drawn at z = 0) never shears. `prox·cap` is a smoothstep × const
+  ⇒ ≈ 0 at rest (rim solid), small bounded max up close.
+- **Why it anchors.** Geometry exactly on the z = 0 window plane maps to the screen edges
+  for ANY eye/zoom, so the rim is bezel-locked at every distance (no dolly to carry it
+  off). Verified to machine precision (4.6e-13 px) across all head-z in `sim_envelop`.
+- **Object worlds byte-identical** — never set `enveloping`, never capped; `sim_viewing`
+  / `sim_vertical` / `sim_offaxis` / `sim_orbit` unchanged. **`camera_math.py` untouched**
+  (gate is frozen `om.proximity`; cap is a post-multiply). Earth/Watcher `world.json`
+  untouched. `sim_envelop.py` rewritten to pin the new invariants (zoom IS the object
+  telephoto; gem same size as Earth + grows on lean-in; rim bezel-locked at every head-z;
+  frozen gate; pan = object pan × 0.35, monotone + C¹). **All 10 sims pass.**
+- **Files.** `Launcher/app_engine.py` (deleted DOLLY_* + LOOK_ENGAGE/PRELOOK/AMP + the
+  per-world branches; added `LOOK_ENCLOSURE_AMP`), `Worlds/world_runtime.py` (`enveloping`
+  docstring), `Scripts/validation/sim_envelop.py`.
+- **Next:** live GUI pass to tune the single `LOOK_ENCLOSURE_AMP` knob against feel
+  (raise = more Earth-like pan / more rim shift; lower = tighter anchor).
+
+> [!warning] The two entries below are SUPERSEDED (kept for history)
+> Both the "grid + sphere merge" (engage·amp look) and the "forward dolly" depth model
+> were removed by the 2026-06-02 final revert above. The grid worlds no longer dolly and
+> no longer split the look weight — they use Earth's exact camera with a single capped
+> look. Read the entries below only as the path that led here.
 
 ## Enclosure-world viewing model — forward dolly (lean in = move INTO the room) — DONE (2026-06-02)
 

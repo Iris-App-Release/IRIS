@@ -69,7 +69,7 @@ Obsidian vault to browse them as a graph.
 | Page | Summary | Type |
 |---|---|---|
 | [System Interactions](architecture/system-interactions.md) | Import chain, per-frame data flow, and the file-based message bus (diagrams) | architecture |
-| [Viewing Models](architecture/viewing-models.md) | The two illusion methods (object/telephoto vs. enclosure/forward-dolly) and how to choose one for a new world | architecture |
+| [Viewing Models](architecture/viewing-models.md) | One shared camera (telephoto + proximity look); object/open vs. rim-anchored enclosure world styles, and how to choose one for a new world | architecture |
 | [What Makes Perspective Optimal](what-makes-perspective-optimal.md) | Why Earth's exploration feel is smooth (blended translation+rotation) and how to achieve it in enclosures | theory |
 | [Constraints](architecture/constraints.md) | Viewing distance, latency, camera/permission, GL, platform, and memory limits | architecture |
 | [Camera Indicator Light](camera-indicator-ethics.md) | Why the green light exists, why it can't be disabled, and why IRIS's transparent design is a feature | architecture |

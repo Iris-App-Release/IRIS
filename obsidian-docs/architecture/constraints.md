@@ -41,27 +41,24 @@ by [[headless-simulation]].
   (anti-nausea); proximity gate fades rotation in over `hz ∈ [0.0, 0.8]`; a
   proximity-scaled `LOOK_PITCH_OFFSET = 0.25` re-zeroes the resting gaze onto the
   planet (the webcam sits above the screen). See [[engine-loop-and-daemon]].
-- **Per-world depth response (`rendering.enveloping`, default false).** Object
-  worlds (Earth, The Watcher) use distance scaling `cz = CAM_BASE_Z·e^(+ZOOM_K·hz)`
-  (lean in → telephoto magnify) and the rotation gate above. **Enclosure worlds**
-  (Grid Room, Gem) instead hold `cz = CAM_BASE_Z` (FOV constant at 58° — no lens
-  zoom) and apply a **forward dolly**: the scene is translated toward the eye by
-  `dolly = clamp(DOLLY_GAIN·hz)` world units along −z (baked into the modelview),
-  so leaning in moves the camera INTO the room — the foreground object GROWS with
-  honest perspective and the front rim expands off-screen until enveloped. The
-  rotational look is **merged toward the Earth feel (2026-06-02)**: `prox =
-  engage(hz)·amp(hz)`, where `engage = proximity(hz, [LOOK_ENGAGE_LO, LOOK_ENGAGE_HI]
-  = [0.35, 1.0])` opens early/wide like the object gate, and `amp` caps the look
-  amplitude to `LOOK_PRELOOK_AMP = 0.22` until the dolly clears the rim (≈ hz 0.72,
-  derived from `DOLLY_GAIN`), then ramps to full. So enclosures gain Earth's blended
-  eye-looking while keeping their bezel-locked rim (the early look can't shear a
-  still-visible grid edge). The two depth mechanisms are per-world, not a global
-  sign: in a fixed-window off-axis rig moving the eye toward the glass *shrinks* a
-  foreground object (size ∝ `cz/(cz+10)`), so envelopment and "move in = grow" can
-  only coexist via a scene translation. `camera_math.py` is untouched (the dolly is a
-  modelview translate; all gate lo/hi are `proximity()` args). Pinned by
-  `sim_envelop.py`. See [[off-axis-projection]] / [[viewing-models]] /
-  [[what-makes-perspective-optimal]] and the merge entry in [[log]] / [[known_issues]].
+- **Per-world look cap (`rendering.enveloping`, default false).** As of 2026-06-02
+  (final), EVERY world — object and enclosure — uses the SAME camera: telephoto
+  `cz = CAM_BASE_Z·e^(+ZOOM_K·hz)` and the rotation gate above
+  (`proximity(hz, [0.0, 0.8])`). So the grid worlds zoom exactly like the sphere worlds
+  and the look fades in over the same head-z distances; a body at the `z = −10` anchor
+  is the same on-screen size in every world. The **only** per-world difference: enclosure
+  worlds (Grid Room, Gem) draw a front rim on the glass at `z = 0`, which the off-axis
+  projection pins to the screen edges as a hard bezel anchor; a pan would shear that
+  visible rim, so for `enveloping` worlds the look pan is scaled by a single constant
+  `LOOK_ENCLOSURE_AMP = 0.35` (≈ 0 at rest via the proximity gate, small bounded max up
+  close). Object worlds are uncapped → byte-identical. `camera_math.py` is untouched (the
+  gate is the frozen `proximity`; the cap is a plain post-multiply). Pinned by
+  `sim_envelop.py`. *(The earlier per-world FORWARD DOLLY depth model — held `cz`
+  constant and translated the scene toward the eye to "move into the room" — was removed
+  because it grew a foreground object ~3.6× and diverged from Earth's size; the user asked
+  for the grid worlds to behave exactly like the sphere worlds. See [[off-axis-projection]]
+  / [[viewing-models]] / [[what-makes-perspective-optimal]] and the revert entry in
+  [[log]] / [[known_issues]].)*
 
 ## Latency & frame rate
 
