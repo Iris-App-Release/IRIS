@@ -8,21 +8,22 @@ last_updated: 2026-06-02
 
 # What Makes Perspective Optimal
 
-> [!success] Implemented 2026-06-02 (final form) — enclosures use Earth's EXACT camera, with a capped look
-> This page's central question — *how do enclosures get the sphere worlds' feel without
-> shearing their anchored rim* — is resolved in the engine by **option 3** (the hybrid
-> gate, §"Barriers" below). The path went through two intermediate designs (a
-> frustum-widen, then a **forward dolly + merged engage·amp look**) that both made the
-> grid worlds *diverge* from Earth; the user rejected them and asked for the grid worlds
-> to behave **exactly** like the sphere worlds, anchored. Final shipped form:
-> the enclosure worlds ([[grid-room]], [[the-gem]]) use the **identical telephoto zoom
-> and the identical frozen proximity look-gate ([0.0, 0.8])** as [[earth]] — so they
-> zoom the same, the look fades in over the same head-z distances, and a body at the
-> Earth anchor subtends the same on-screen size Earth would. The **only** difference is
-> a single constant, `LOOK_ENCLOSURE_AMP = 0.35`, that caps the look *amplitude* so the
-> bezel-locked rim never shears ("just limit the distance I can look/pan in the grids").
-> Mechanism in `Launcher/app_engine.py` (the `LOOK_ENCLOSURE_AMP` block); pinned by
-> `Scripts/validation/sim_envelop.py`. (log: 2026-06-02 "revert+resimplify".)
+> [!important] SUPERSEDED 2026-06-02 (final) — grids do NOT pan; panning is sphere-only
+> This page spent its length asking *how do enclosures get the sphere worlds' pan without
+> shearing their anchored rim.* The final answer is: **they don't, and they shouldn't.**
+> An anchored wall and a rotational pan are a direct contradiction — any non-zero pan
+> rotates the still-visible z = 0 rim and shears it. The user's decisive call: *"I wanted
+> the gem to pan like the earth, but it simply can't… we're trying to invent something
+> that doesn't exist."* So the enclosure worlds ([[grid-room]], [[the-gem]]) keep Earth's
+> **telephoto zoom**, **parallax** window shift and **bezel-anchored rim**, but their
+> rotational look is held at **ZERO**. Clean panning is exclusive to the open sphere
+> worlds (no anchored walls — they are for *exploring the void*; grids *communicate the
+> parallax box directly*). Every attempt to allow an enclosure pan — a frustum-widen, a
+> forward dolly, a capped look (`LOOK_ENCLOSURE_AMP = 0.35`), and a screen-space
+> proscenium to mask the residual shear — was tried and reverted. Mechanism: the
+> `if world.enveloping: yaw_target = pitch_tgt = 0.0` branch in `Launcher/app_engine.py`;
+> pinned by `Scripts/validation/sim_envelop.py` (enclosure pan ≡ 0). The sections below
+> are kept as the **reasoning history** that led here. (log: [[2026-06-02_grids-dont-pan]].)
 
 ## The Earth world is smooth because translation and rotation COEXIST
 
@@ -136,11 +137,27 @@ the sphere worlds (same zoom, same look distances, gem the same size as Earth), 
 — not a separate "enter the room" mechanism. All 10 headless sims pass; object worlds
 byte-identical.
 
-**Still needs a human in the room (live-feel calibration — one knob):**
+**Still needs a human in the room (live-feel calibration — two knobs):**
 - Tune `LOOK_ENCLOSURE_AMP` against real feel: raise toward 1.0 for a more Earth-like
   full pan (more rim shift near full lean-in); lower for a tighter anchor; `0.0` is a
   pure anchored window with no look. The sim bounds the geometry; the *threshold* of
   perception is the human's call.
+## Final resolution: grids don't pan (2026-06-02)
+
+The cap (`LOOK_ENCLOSURE_AMP = 0.35`) made the shear *small*, never *zero* — the
+still-visible rim still keystones as the look pans. A screen-space proscenium (a
+camera-locked feathered edge to mask that residual shear) and a dormant `behind_cells` wrap
+grid were both tried and reverted. The decisive realisation: **hiding the shear is the
+wrong direction when the shear shouldn't exist.** An anchored rim and a rotational pan
+cannot coexist, full stop. So the enclosure look is set to **zero** — grids keep zoom +
+parallax + anchor and do not pan; panning belongs to the sphere worlds. See the superseded
+callout at the top and log [[2026-06-02_grids-dont-pan]].
+
+> The lasting principle from the proscenium detour: *a reference frame can only suppress a
+> distortion if it does not move with the distortion.* A world-locked grid (the
+> "behind-camera grid" idea) rotates with the view and so cannot stabilise a pan — it
+> shears worse near the eye. That reasoning is why no in-world element can rescue an
+> enclosure pan, and why the pan was removed rather than masked.
 
 ---
 

@@ -11,44 +11,42 @@ sources: [Tracking/face_tracker.py, Launcher/app_engine.py, Engine/renderer.py, 
 What's actively being worked on right now. Keep this short — move durable
 conclusions into the relevant system page and bug records into [[known_issues]].
 
-## Grid worlds use Earth's EXACT camera (telephoto zoom + frozen gate); only the look is capped to anchor the rim — DONE (2026-06-02, final)
+## Grid worlds: Earth's zoom + parallax + anchored rim, and NO pan — DONE (2026-06-02, final)
 
-Decision (user, emphatic): the grid worlds' **zoom and look should operate EXACTLY like
-the sphere worlds** — the rotational exploration transitions over the same head-z
-distances, and the gem appears the same size as Earth would at the same distance,
-initially and at full lean-in — *but* the grid stays anchored to the bezel. This
-**reverts the two intermediate enclosure models** below (the forward dolly + the
-engage·amp merge): both made the grid worlds diverge from Earth (the dolly grew a hero
-object ~3.6×), which the user rejected.
+Decision (user, decisive): *"I wanted the gem to pan like the earth, but it simply can't.
+The panning works so well on earth because of its lack of anchored walls — we're trying to
+invent something that doesn't exist… NO panning on the grid worlds… Keep the sphere worlds
+exactly the same."* Earth pans cleanly **because** it has no anchored walls; an enclosure's
+bezel-locked rim and a rotational pan are a direct contradiction (any pan rotates the
+visible rim and shears it). So the grid worlds keep Earth's telephoto **zoom** (gem stays
+Earth-sized), the **parallax** window shift and the **anchored rim**, and their rotational
+look is held at **zero**. Panning is exclusive to the open sphere worlds (void exploration);
+grids communicate the parallax box directly.
 
-- **Mechanism (consuming layer only; the simplest possible form).** Removed the
-  per-world depth branch + the `DOLLY_*` constants + the modelview dolly: every world now
-  uses telephoto `cz = BASE_Z·e^(+ZOOM_K·hz)`. Removed the `engage·amp` split + the
-  `LOOK_ENGAGE/PRELOOK/AMP` constants: every world now uses the frozen `om.proximity(hz)`
-  ([0.0, 0.8]) gate. The **only** enclosure difference is one constant —
-  `LOOK_ENCLOSURE_AMP = 0.35` — multiplied into the look pan for `enveloping` worlds, so
-  the bezel-locked rim (drawn at z = 0) never shears. `prox·cap` is a smoothstep × const
-  ⇒ ≈ 0 at rest (rim solid), small bounded max up close.
+- **Mechanism (consuming layer only).** `if world.enveloping: yaw_target = pitch_tgt = 0.0`
+  in `Launcher/app_engine.py`. Removed the `LOOK_ENCLOSURE_AMP` cap (a non-zero pan still
+  shears), the same-session screen-space proscenium (`renderer.draw_proscenium` +
+  `proscenium_feather`), and the dormant `behind_cells` wrap grid. Zoom & parallax are
+  Earth's, untouched.
 - **Why it anchors.** Geometry exactly on the z = 0 window plane maps to the screen edges
-  for ANY eye/zoom, so the rim is bezel-locked at every distance (no dolly to carry it
-  off). Verified to machine precision (4.6e-13 px) across all head-z in `sim_envelop`.
-- **Object worlds byte-identical** — never set `enveloping`, never capped; `sim_viewing`
-  / `sim_vertical` / `sim_offaxis` / `sim_orbit` unchanged. **`camera_math.py` untouched**
-  (gate is frozen `om.proximity`; cap is a post-multiply). Earth/Watcher `world.json`
-  untouched. `sim_envelop.py` rewritten to pin the new invariants (zoom IS the object
-  telephoto; gem same size as Earth + grows on lean-in; rim bezel-locked at every head-z;
-  frozen gate; pan = object pan × 0.35, monotone + C¹). **All 10 sims pass.**
-- **Files.** `Launcher/app_engine.py` (deleted DOLLY_* + LOOK_ENGAGE/PRELOOK/AMP + the
-  per-world branches; added `LOOK_ENCLOSURE_AMP`), `Worlds/world_runtime.py` (`enveloping`
-  docstring), `Scripts/validation/sim_envelop.py`.
-- **Next:** live GUI pass to tune the single `LOOK_ENCLOSURE_AMP` knob against feel
-  (raise = more Earth-like pan / more rim shift; lower = tighter anchor).
+  for ANY eye/zoom, so the rim is bezel-locked at every distance. Verified to machine
+  precision (4.6e-13 px) across all head-z in `sim_envelop`.
+- **Object/sphere worlds byte-identical** — never set `enveloping`, so the zeroing branch
+  is skipped; full proximity-gated look unchanged. **`camera_math.py` + shaders untouched.**
+  Earth/Watcher `world.json` untouched. `sim_envelop.py` rewritten to pin the new
+  invariants (zoom IS the object telephoto; gem same size as Earth + grows on lean-in; rim
+  bezel-locked; **enclosure pan ≡ 0**; sphere worlds still pan 0→1358 px). **All 10 sims pass.**
+- **Files.** `Launcher/app_engine.py` (deleted `LOOK_ENCLOSURE_AMP` block; enclosure branch
+  zeroes the look), `Engine/renderer.py` (removed `draw_proscenium` + `behind_cells`),
+  `Worlds/world_runtime.py` (removed `proscenium_feather`; `enveloping` docstring),
+  `Scripts/validation/sim_envelop.py`. Log: [[2026-06-02_grids-dont-pan]].
+- **Next:** live GUI verify pass (eyeball zoom + parallax + anchored rim on Gem / Grid Room;
+  confirm no pan, sphere worlds unchanged).
 
-> [!warning] The two entries below are SUPERSEDED (kept for history)
-> Both the "grid + sphere merge" (engage·amp look) and the "forward dolly" depth model
-> were removed by the 2026-06-02 final revert above. The grid worlds no longer dolly and
-> no longer split the look weight — they use Earth's exact camera with a single capped
-> look. Read the entries below only as the path that led here.
+> [!warning] The entries below are SUPERSEDED (kept for history)
+> The "capped look" (`LOOK_ENCLOSURE_AMP`), the "grid + sphere merge" (engage·amp look) and
+> the "forward dolly" depth model were ALL removed by the 2026-06-02 final decision above:
+> grids don't pan. Read the entries below only as the path that led here.
 
 ## Enclosure-world viewing model — forward dolly (lean in = move INTO the room) — DONE (2026-06-02)
 

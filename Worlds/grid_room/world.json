@@ -22,5 +22,36 @@
     "grid_depth": 18.0,
     "grid_divisions": 8,
     "clear_color": [0.01, 0.012, 0.022]
+  },
+  "assets": {
+    "placeable_objects": [
+      {
+        "id": "neon_cube_1",
+        "model": "builtin:cube",
+        "grid_position": [-2, -1, 6],
+        "scale": 0.9,
+        "color": [1.0, 0.2, 0.8],
+        "emissive": true,
+        "rotation": [0, 30, 0]
+      },
+      {
+        "id": "neon_sphere_1",
+        "model": "builtin:sphere",
+        "grid_position": [3, 2, 4],
+        "scale": 0.7,
+        "color": [0.2, 0.9, 1.0],
+        "emissive": true,
+        "rotation": [0, 0, 0]
+      },
+      {
+        "id": "neon_cylinder_1",
+        "model": "builtin:cylinder",
+        "grid_position": [0, -3, 3],
+        "scale": 0.8,
+        "color": [0.6, 1.0, 0.3],
+        "emissive": true,
+        "rotation": [0, 0, 0]
+      }
+    ]
   }
 }

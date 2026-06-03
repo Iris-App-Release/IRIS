@@ -41,7 +41,10 @@ from OpenGL.GL  import *
 from OpenGL.GLU import gluPerspective, gluLookAt
 
 from Tracking.face_tracker import FaceTracker, DENIED
-from Engine.renderer import Earth, Stars, Nebula, IconOrbit, Eye, Gem, GridRoom, draw_window_frame
+from Engine.renderer import (
+    Earth, Stars, Nebula, IconOrbit, Eye, Gem, GridRoom, PlaceableObjects,
+    draw_window_frame,
+)
 from Engine import camera_math as om
 from Engine import calibration as calib_mod
 
@@ -145,31 +148,19 @@ CAM_Z_MAX  = 34.0
 # feels excellent, so it is left untouched.
 ROT_MAX_RAD = math.radians(om.ROT_MAX_DEG)
 
-# ── Enclosure rotational "look" — amplitude cap to protect the bezel anchor ───
+# ── Enclosure / grid worlds do NOT pan (rotational look held at zero) ─────────
 # The ENCLOSURE worlds (Grid Room, Gem — world.enveloping = True) draw a front rim on
 # the glass at world z = 0. Under the off-axis projection, geometry exactly on that
 # z = 0 window plane maps to the screen edges for ANY eye position or zoom, so the rim
-# is a HARD "bezel anchor" at rest — the good part of the grid worlds. The catch: the
-# rotational look pans the view by rotating the modelview about the eye, which rotates
-# that still-visible rim and SHEARS it off the screen border. The sphere worlds have
-# no rim, so they pan freely; the enclosures cannot, without breaking the anchor.
-#
-# Resolution (the user's directive — "option 3 / hybrid gate" from
-# what-makes-perspective-optimal.md): the enclosure worlds use the SAME telephoto zoom
-# AND the SAME proximity gate TIMING as the sphere worlds (so the look fades in over
-# the SAME head-z distances and transitions just as smoothly — om.proximity(hz), the
-# frozen [0.0, 0.8] band), but the look AMPLITUDE is capped to LOOK_ENCLOSURE_AMP so the
-# bezel rim never visibly shears — "just limit the amount of distance I can look/pan in
-# the grids." The look is ALSO proximity-gated (prox ≈ 0 at neutral, growing as you lean
-# in), so the product prox·cap is ≈ 0 at rest — the rim is rock-solid anchored when
-# you're back, and you only earn a small, bounded pan once you're leaning in / "in the
-# room". Object worlds (Earth / The Watcher) are NOT capped → byte-identical to before.
-# camera_math.py is untouched (the gate is the frozen om.proximity; the cap is a plain
-# post-multiply here). Pinned by Scripts/validation/sim_envelop.py.
-#   CALIBRATE LIVE: raise LOOK_ENCLOSURE_AMP toward 1.0 for a more Earth-like full pan
-#   (but more rim shear near full lean-in); lower it for a tighter bezel anchor with
-#   less look; 0.0 disables the enclosure look entirely (a pure anchored window).
-LOOK_ENCLOSURE_AMP = 0.35
+# is a HARD "bezel anchor" — the whole point of the grid: it communicates real cm² of
+# digital space, a box behind the glass. A rotational look pans the view about the eye,
+# which rotates that still-visible rim and SHEARS it — an anchored wall and a pan are a
+# direct contradiction. Capping the pan (an earlier LOOK_ENCLOSURE_AMP) only made the
+# shear smaller, never clean, so the enclosure look is simply ZERO (handled inline in
+# the frame loop). Clean panning is exclusive to the SPHERE worlds, which have no
+# anchored walls — that is for exploring the void; grids communicate the parallax box
+# directly. Object / sphere worlds keep the full proximity-gated look, untouched.
+# Pinned by Scripts/validation/sim_envelop.py.
 
 # NEAR-FIELD VERTICAL EXPLORATION (Objective #2). Vertical looking gets its OWN,
 # larger gain than yaw so that up close the viewer can peer UP / DOWN far enough
@@ -402,6 +393,7 @@ def main() -> None:
                    # so an Earth-only session never touches the eye shader/texture.
     gem   = None   # The Gem — built lazily on first use, same guard pattern.
     room  = None   # The Grid Room — wireframe shadow-box, built lazily, same guard.
+    placeables = None  # World Builder placeable-object draw helper, built lazily.
 
     # Live, mtime-cached metric calibration. Disabled by default, so half_h()→None
     # (camera_math uses the frozen WINDOW_HALF_H) and shift_scale→1.0: the camera
@@ -670,15 +662,20 @@ def main() -> None:
         # untouched ROT_MAX_RAD — lateral looking already feels right.)
         pitch_in    = (pitch - LOOK_PITCH_OFFSET * prox) if tracker.has_rotation else pitch
         pitch_tgt   =  pitch_in * ROT_MAX_PITCH_RAD * prox
-        # ENCLOSURE worlds (Grid Room, Gem): the front rim is bezel-locked on the glass
-        # (z = 0); a full pan would rotate that still-visible rim and shear it. Same zoom
-        # + same gate timing as the sphere worlds — only the look AMPLITUDE is capped so
-        # the anchor holds ("limit the distance I can look/pan in the grids"). Combined
-        # with the proximity gate above, the pan is ≈0 at rest (rim solid) and grows to a
-        # small bounded max as you lean in. Object worlds are uncapped → byte-identical.
+        # ENCLOSURE / GRID worlds (Grid Room, Gem — world.enveloping = True): NO pan.
+        # The grid's whole purpose is to communicate real cm² of digital space — a box
+        # anchored to the bezel, behind the glass. Rotating the view pans the view about
+        # the eye, which rotates that still-visible z = 0 rim and SHEARS it: an anchored
+        # wall and a rotational look cannot cleanly coexist. Clean panning works on the
+        # SPHERE worlds precisely because they have no anchored walls — that is for
+        # exploring the void; grids are for reading the parallax box directly. So the
+        # enclosures keep the smooth telephoto zoom, the parallax window shift and the
+        # bezel anchor, but the rotational look is held at ZERO. (Tried capping the pan;
+        # any non-zero pan still shears the anchored rim — reverted 2026-06-02.) Object /
+        # sphere worlds are untouched → byte-identical.
         if world.enveloping:
-            yaw_target *= LOOK_ENCLOSURE_AMP
-            pitch_tgt  *= LOOK_ENCLOSURE_AMP
+            yaw_target = 0.0
+            pitch_tgt  = 0.0
         pitch_tgt   =  max(-PITCH_PAN_MAX_RAD, min(PITCH_PAN_MAX_RAD, pitch_tgt))
         cam_yaw    += cam_alpha * (yaw_target - cam_yaw)
         cam_pitch  += cam_alpha * (pitch_tgt  - cam_pitch)
@@ -814,6 +811,22 @@ def main() -> None:
             if room is not None:
                 room.draw(hw, hh, world.grid_depth, world.grid_divisions,
                           world.grid_color, t_s, dpi_scale)
+                # World Builder: user-placed builtin primitives, drawn in world
+                # space right after the grid (same frame of reference). Built
+                # lazily + guarded; a failure here must never kill the wallpaper.
+                objs = world.placeable_objects
+                if objs:
+                    if placeables is None:
+                        try:
+                            placeables = PlaceableObjects()
+                        except Exception as e:
+                            print(f"[main] PlaceableObjects unavailable ({e}); skipping")
+                    if placeables is not None:
+                        try:
+                            placeables.draw(objs, hw, hh,
+                                            world.grid_depth, world.grid_divisions)
+                        except Exception as e:
+                            print(f"[main] placeable draw failed ({e}); skipping")
             else:
                 glPushMatrix(); glTranslatef(0.0, 0.0, OBJECTS["earth"][2])
                 earth.draw(sun_eye, t_s); glPopMatrix()

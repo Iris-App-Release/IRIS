@@ -13,6 +13,7 @@ Complete index of all dated work sessions. Reference any date directly (e.g., "w
 
 ## 2026-06-02
 
+- [[2026-06-02_grids-dont-pan|2026-06-02 — Grids don't pan (enclosure look → 0)]]
 - [[2026-06-02_grid-room-docs|2026-06-02 — Grid Room documentation]]
 - [[2026-06-02_gem-enclosure-box|2026-06-02 — Gem enclosure box]]
 - [[2026-06-02_enveloping-zoom|2026-06-02 — Enveloping zoom fix]]

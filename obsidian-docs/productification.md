@@ -282,7 +282,7 @@ Scalable Platform
 **Objective.** A creator ecosystem and multi-platform reach.
 
 **Success criteria:**
-- [[grid-api-customization]]: spatial coordinate system for safe, user-friendly world customization. Grid-aligned asset placement (locked physics, mutable assets only) enables Claude-assisted world building and procedural generation.
+- [[grid-api-customization]]: spatial coordinate system for safe, user-friendly world customization. Grid-aligned asset placement (locked physics, mutable assets only) enables Claude-assisted world building and procedural generation. **A concrete, code-grounded build plan for this — phases, testing, frozen boundaries, and the entitlement/payment track — is in [[grid-creator-tool-plan]].**
 - World creator tool: a GUI or validated schema editor producing compliant `world.json` files without touching engine code
 - Community submission pipeline: GitHub PR template or hosted upload portal
 - 10+ community-contributed worlds available

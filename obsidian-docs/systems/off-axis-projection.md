@@ -68,13 +68,15 @@ The view is the smooth blend of three independent inputs from
    the **right** of the scene (panning a portal) — deliberately the opposite of
    translation. **Every world** uses the frozen gate window `proximity(hz)` =
    `[ROT_PROX_LO, ROT_PROX_HI] = [0.0, 0.8]`, so the look fades in over the same
-   distances everywhere. **Enclosure worlds** (`rendering.enveloping = true`) draw a
-   front rim on the glass at `z = 0` that the projection pins to the screen edges as a
-   bezel anchor; a pan would shear that visible rim, so the enclosure look pan is scaled
-   by one constant `LOOK_ENCLOSURE_AMP = 0.35` (≈ 0 at rest via the gate, a small bounded
-   max up close). Object worlds are uncapped → byte-identical. `camera_math.py` is
-   untouched (the cap is a post-multiply in `app_engine.py`). See [[viewing-models]] and
-   [[what-makes-perspective-optimal]].
+   distances on the **object/sphere worlds**. **Enclosure worlds**
+   (`rendering.enveloping = true`) draw a front rim on the glass at `z = 0` that the
+   projection pins to the screen edges as a bezel anchor; a pan would shear that visible
+   rim, so as of **2026-06-02 (final)** the enclosure rotational look is held at **zero —
+   grids do not pan** (`if world.enveloping: yaw_target = pitch_tgt = 0.0` in
+   `app_engine.py`). *(An earlier capped pan `LOOK_ENCLOSURE_AMP = 0.35` was removed: any
+   non-zero pan still shears the anchor.)* Object worlds keep the full look → byte-identical.
+   `camera_math.py` untouched. See [[viewing-models]], [[what-makes-perspective-optimal]]
+   and log [[2026-06-02_grids-dont-pan]].
 
 ## Key constants
 

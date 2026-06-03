@@ -8,6 +8,13 @@ sources: [Worlds/grid_room/world.json, Worlds/world_loader.py, Engine/renderer.p
 
 # Grid API Customization — Spatial Coordinate System for World Building
 
+> **➡ Implementation plan:** the concrete, code-grounded build plan derived from this
+> design (verified against live source, with phases, testing, frozen boundaries, and the
+> monetization track) lives in [[grid-creator-tool-plan]]. This page is the *design
+> rationale*; that page is the *how-to-build*. Note: the hardcoded `X:-4..+4 / Y:-3..+3`
+> bounds below are superseded — the live engine uses dynamic aperture extents
+> (`om.window_half_extents`); see the plan §3.
+
 ## Problem
 
 IRIS worlds are currently **content-locked:** users cannot easily customize worlds without editing JSON or Python code. As IRIS scales to multiple worlds, we need a **safe, approachable way for users (and Claude) to customize environment content** without risking the frozen physics/camera math.

@@ -92,27 +92,41 @@ Unlike Earth (five textures) and The Watcher (three procedural textures), The Ge
 
 ## Integration with head tracking and projection
 
-The gem uses the **identical** camera math, parallax, zoom and head-tracking pipeline as the [[earth]] object world — by design, as of **2026-06-02 (final)**:
+The gem shares the [[earth]] object world's **zoom and parallax** pipeline, but — being an
+anchored enclosure — it **does not pan**, as of **2026-06-02 (final)**:
 
 - [[off-axis-projection]] `off_axis_frustum` + `view_matrix` set per frame from the head 5-tuple.
-- [[head-tracking]] `hx`, `hy`, `hz`, `yaw`, `pitch` drive the window parallax, telephoto zoom, and proximity-gated rotation — exactly as for Earth.
+- [[head-tracking]] `hx`, `hy`, `hz` drive the window parallax and telephoto zoom — exactly as for Earth. `yaw`/`pitch` (the rotational look) are NOT applied (see below).
 - **Same zoom, same size as Earth.** Leaning IN telephotos the eye back
   (`cz = BASE_Z·e^(+ZOOM_K·hz)`) just like Earth, so the gem at the z = −10 anchor
   subtends the **same on-screen size the Earth would** at any head-z — initially and
   at full lean-in. *(An earlier 2026-06-02 model instead held `cz` constant and dollied
   the scene forward into the box, growing the gem ~3.6× and diverging from Earth's
   size; the user rejected it, so the forward dolly was removed.)*
-- **Enclosure flag (`enveloping: true`) — the one difference: a capped look.** Because
-  the gem floats inside a checkered box whose front rim sits on the glass at z = 0
-  (bezel-locked, shared with [[grid-room]]), a full pan would shear that visible rim.
-  So the look uses Earth's frozen `om.proximity(hz)` ([0.0, 0.8]) gate (same distances,
-  same smoothness) but the pan amplitude is scaled by `LOOK_ENCLOSURE_AMP = 0.35` — a
-  gentle, bounded look that keeps the checker rim anchored. See [[off-axis-projection]]
-  / [[viewing-models]] / [[what-makes-perspective-optimal]] / [[constraints]]; pinned by
-  `sim_envelop.py`.
+- **Enclosure flag (`enveloping: true`) — the one difference: NO pan.** The gem floats
+  inside a checkered box whose front rim is bezel-locked on the glass at z = 0 (shared with
+  [[grid-room]]). A rotational look would rotate that still-visible rim and shear it — an
+  anchored wall and a pan are a direct contradiction — so the look is held at **zero** for
+  every `enveloping` world. *(A capped pan `LOOK_ENCLOSURE_AMP = 0.35`, then a screen-space
+  proscenium to mask its residual shear, were both tried and reverted 2026-06-02: any
+  non-zero pan still shears the anchor.)* Clean panning is exclusive to the open sphere
+  worlds, which have no walls. See [[off-axis-projection]] / [[viewing-models]] /
+  [[what-makes-perspective-optimal]] / [[constraints]]; pinned by `sim_envelop.py`.
 - The gem's own spin is a model transform (inside the anchor push/pop); it does not touch the camera or frustum.
 
-No new tracking pipeline, no new camera code, no new post-processing.
+### No pan — the Gem's box is anchored, not explored (2026-06-02, final)
+
+Because the Gem floats inside a checkered box whose front rim is bezel-locked on the glass
+(z = 0), it **does not pan**. A rotational look would rotate that still-visible rim and
+shear it — an anchored wall and a pan are a direct contradiction. So the Gem keeps the
+smooth telephoto **zoom** (gem stays Earth-sized), the **parallax** window shift and the
+**bezel anchor**, but the rotational look is held at **zero** (handled in `app_engine.py`
+for every `enveloping` world). Clean panning is exclusive to the open sphere worlds (Earth,
+The Watcher), which have no walls to shear. Earlier attempts to allow a capped pan (then to
+hide its shear with a screen-space proscenium) were reverted — see
+[[what-makes-perspective-optimal]] and log [[2026-06-02_grids-dont-pan]].
+
+No new tracking pipeline, no new camera code, no post-processing.
 
 ## Systems used
 

@@ -63,12 +63,12 @@ The Grid Room is drawn in **WORLD space**, before the Earth-anchor translate (ju
 
 ## Enclosure viewing model (`enveloping: true`)
 
-The Grid Room sets `rendering.enveloping = true`, but as of **2026-06-02 (final)** that
-flag no longer means "forward dolly / enter the room." It now means just one thing: the
-Grid Room uses the **exact same camera physics as [[earth]]** — same telephoto zoom,
-same frozen proximity look-gate — and differs only by **capping the look amplitude** so
-its bezel-locked front rim never shears. Per the user's directive: the grid worlds'
-zoom and look should "operate EXACTLY the same as the spherical worlds," anchored.
+The Grid Room sets `rendering.enveloping = true`. As of **2026-06-02 (final)** that flag
+means: the Grid Room shares [[earth]]'s **telephoto zoom and parallax window shift**, keeps
+its **bezel-anchored front rim**, and — being an anchored enclosure — **does not pan**. Its
+rotational look is held at zero. The grid's job is to communicate real cm² of digital space
+(a box behind the glass); a pan would shear that anchored rim, so clean panning is left to
+the open sphere worlds.
 
 - **Zoom — identical to Earth (telephoto).** Head depth drives the eye-to-glass
   distance exactly as in the object worlds: `cz = BASE_Z·e^(+ZOOM_K·hz)`. Leaning IN
@@ -78,29 +78,28 @@ zoom and look should "operate EXACTLY the same as the spherical worlds," anchore
   *(An earlier 2026-06-02 model held `cz` constant and dollied the scene forward to
   read as "entering the room"; it grew foreground objects ~3.6× and diverged from
   Earth's size, so it was removed.)*
+- **Parallax — identical to Earth.** Lateral/vertical head motion shears the off-axis
+  frustum (`cam_x`/`cam_y`), so the receding grid lines shift on screen and the back wall
+  recedes against the anchored front rim — the core fish-tank depth cue, unchanged.
 - **Bezel anchor — the rim stays on the screen edges at every distance.** The front
   rim is drawn on the glass at world z = 0. Under the off-axis projection, geometry
   exactly on the z = 0 window plane maps to the screen edges for *any* eye position or
   zoom — so the rim is pinned to the bezel throughout the whole approach (verified to
   machine precision across all head-z in `sim_envelop.py`). This is the "good part of
-  the grid worlds," and it now holds at every distance because nothing carries the rim
-  off-screen.
-- **Rotational look — Earth's gate, capped amplitude.** The look uses the frozen
-  `om.proximity(hz)` ([0.0, 0.8]) gate, identical to Earth, so it fades in over the
-  **same head-z distances** and just as smoothly. The catch: a pan rotates the
-  still-visible rim about the eye and would shear it. So the enclosure pan is scaled by
-  a single constant, `LOOK_ENCLOSURE_AMP = 0.35`, in `app_engine.py`. Because the look
-  is also proximity-gated, the pan is ≈ 0 at rest (rim rock-solid) and grows to a small,
-  bounded max as you lean in / get "in the room" — a gentle look that never warps the
-  grid. Raise `LOOK_ENCLOSURE_AMP` toward 1.0 for a more Earth-like pan (more rim
-  shift); lower it for a tighter anchor. (See [[what-makes-perspective-optimal]] /
-  [[viewing-models]].)
+  the grid worlds."
+- **No rotational look (no pan).** A rotational look pans the view about the eye, which
+  rotates the still-visible rim and **shears** it. An anchored wall and a pan are a direct
+  contradiction, so the look is held at **zero** in `app_engine.py` for every `enveloping`
+  world. *(A capped pan `LOOK_ENCLOSURE_AMP = 0.35`, then a screen-space proscenium and a
+  dormant `behind_cells` wrap grid to mask the residual shear, were all tried and reverted
+  2026-06-02 — any non-zero pan still shears the anchor.)* See
+  [[what-makes-perspective-optimal]] / [[viewing-models]] and log [[2026-06-02_grids-dont-pan]].
 
 Pinned by the headless guard `Scripts/validation/sim_envelop.py` (enclosure zoom IS the
 object telephoto law; a z = −10 body is the same size under both paths and grows on
-lean-in; the rim is bezel-locked at every head-z & eye offset; the look uses the frozen
-`om.proximity` gate; the enclosure pan = object pan × `LOOK_ENCLOSURE_AMP`, ≤ object pan,
-monotone + C¹; object path uncapped → Earth byte-identical).
+lean-in; the rim is bezel-locked at every head-z & eye offset; the enclosure look is
+identically zero — a full head turn produces 0 px of pan; the sphere worlds still pan
+0 → 1358 px → only enclosures are zeroed).
 
 ## Minimal assets
 

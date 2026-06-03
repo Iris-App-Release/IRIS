@@ -31,6 +31,7 @@ from Engine import camera_math as om
 from Engine.shader_loader import (
     load_program, load_texture_2d, bind_texture_unit, Uniforms,
 )
+from Worlds.placeable import grid_to_world, sanitize_objects
 
 HERE        = Path(__file__).parent.parent  # project root
 ASSETS      = HERE / "assets"
@@ -119,6 +120,75 @@ def make_gem(n=16, r_girdle=2.2, table_ratio=0.48, h_crown=0.79, h_pav=2.80):
     return (
         np.array(verts, dtype=np.float32),
         np.array(norms, dtype=np.float32),
+    )
+
+
+def make_cube(half: float = 0.5):
+    """Axis-aligned unit cube centred at origin (edge length 2*half).
+
+    24 vertices (4 per face) so each face carries its own flat normal — used by
+    the World Builder `builtin:cube` primitive. Returns (vertices, normals, indices)
+    as float32/float32/uint32; no UVs (objects are flat-coloured, not textured)."""
+    faces = [
+        ((0, 0, 1),  [(-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1)]),   # +Z
+        ((0, 0, -1), [(1, -1, -1), (-1, -1, -1), (-1, 1, -1), (1, 1, -1)]),  # -Z
+        ((1, 0, 0),  [(1, -1, 1), (1, -1, -1), (1, 1, -1), (1, 1, 1)]),   # +X
+        ((-1, 0, 0), [(-1, -1, -1), (-1, -1, 1), (-1, 1, 1), (-1, 1, -1)]),  # -X
+        ((0, 1, 0),  [(-1, 1, 1), (1, 1, 1), (1, 1, -1), (-1, 1, -1)]),   # +Y
+        ((0, -1, 0), [(-1, -1, -1), (1, -1, -1), (1, -1, 1), (-1, -1, 1)]),  # -Y
+    ]
+    verts, norms, idx = [], [], []
+    for nrm, corners in faces:
+        base = len(verts)
+        for c in corners:
+            verts.append((c[0] * half, c[1] * half, c[2] * half))
+            norms.append(nrm)
+        idx += [base, base + 1, base + 2, base, base + 2, base + 3]
+    return (
+        np.array(verts, dtype=np.float32),
+        np.array(norms, dtype=np.float32),
+        np.array(idx,   dtype=np.uint32),
+    )
+
+
+def make_cylinder(radius: float = 0.5, height: float = 1.0, segments: int = 24):
+    """Capped cylinder, axis = Y, centred at origin (spans y ∈ [-h/2, +h/2]).
+
+    Side quads carry radial normals; caps carry axial normals — used by the World
+    Builder `builtin:cylinder` primitive. Returns (vertices, normals, indices)."""
+    hy = height / 2.0
+    verts, norms, idx = [], [], []
+
+    # Side wall.
+    for i in range(segments):
+        a0 = 2.0 * math.pi * i / segments
+        a1 = 2.0 * math.pi * (i + 1) / segments
+        x0, z0 = math.cos(a0), math.sin(a0)
+        x1, z1 = math.cos(a1), math.sin(a1)
+        base = len(verts)
+        verts += [(x0 * radius, -hy, z0 * radius), (x1 * radius, -hy, z1 * radius),
+                  (x1 * radius,  hy, z1 * radius), (x0 * radius,  hy, z0 * radius)]
+        norms += [(x0, 0.0, z0), (x1, 0.0, z1), (x1, 0.0, z1), (x0, 0.0, z0)]
+        idx += [base, base + 1, base + 2, base, base + 2, base + 3]
+
+    # Top (+Y) and bottom (-Y) caps as triangle fans.
+    for cy, ny, flip in ((hy, 1.0, False), (-hy, -1.0, True)):
+        center = len(verts)
+        verts.append((0.0, cy, 0.0)); norms.append((0.0, ny, 0.0))
+        ring = len(verts)
+        for i in range(segments):
+            a = 2.0 * math.pi * i / segments
+            verts.append((math.cos(a) * radius, cy, math.sin(a) * radius))
+            norms.append((0.0, ny, 0.0))
+        for i in range(segments):
+            nxt = (i + 1) % segments
+            idx += ([center, ring + nxt, ring + i] if flip
+                    else [center, ring + i, ring + nxt])
+
+    return (
+        np.array(verts, dtype=np.float32),
+        np.array(norms, dtype=np.float32),
+        np.array(idx,   dtype=np.uint32),
     )
 
 
@@ -1154,11 +1224,10 @@ class GridRoom:
         t = min(1.0, max(0.0, (-z) / depth)) if depth > 1e-6 else 0.0
         return self._A_FRONT + (self._A_BACK - self._A_FRONT) * t
 
-    def _rebuild(self, half_w, half_h, depth, divisions, color, behind_cells=0) -> None:
+    def _rebuild(self, half_w, half_h, depth, divisions, color) -> None:
         v, c = [], []
         r, g, b = color
         D  = max(1, int(divisions))
-        BC = max(0, int(behind_cells))
 
         def line(p0, p1, a0=None, a1=None):
             a0 = self._alpha_at(p0[2], depth) if a0 is None else a0
@@ -1187,39 +1256,6 @@ class GridRoom:
                ( half_w,  half_h, 0.0), (-half_w, half_h, 0.0)]
         for i in range(4):
             line(rim[i], rim[(i + 1) % 4], self._A_RIM, self._A_RIM)
-
-        # ── Behind-camera wrap: BC cells extending into positive z ────────────
-        # These lines sit between the glass (z=0) and the camera (z=cz). At rest
-        # they live at/beyond the viewport edges and are mostly clipped. When the
-        # proximity-gated pan engages they sweep into view, giving the impression
-        # the room wraps around the viewer and masking the z=0 rim shear so a
-        # higher LOOK_ENCLOSURE_AMP looks clean. Alpha fades 0.45→0 from z=0→+bd.
-        if BC > 0:
-            cell_z = depth / D
-            bd     = BC * cell_z      # total behind extent (positive z)
-            A_B    = 0.45             # alpha at z=0 for behind lines
-
-            def ba(zp: float) -> float:
-                return A_B * max(0.0, 1.0 - zp / bd)
-
-            # Transverse cross-sections at z = cell_z, 2·cell_z, …, bd.
-            # (Skip z=0 — the forward section already draws lines there.)
-            for i in range(1, BC + 1):
-                zp = cell_z * i
-                a  = ba(zp)
-                line((-half_w, -half_h, zp), (half_w, -half_h, zp), a, a)   # floor
-                line((-half_w,  half_h, zp), (half_w,  half_h, zp), a, a)   # ceiling
-                line((-half_w, -half_h, zp), (-half_w, half_h, zp), a, a)   # left
-                line(( half_w, -half_h, zp), ( half_w, half_h, zp), a, a)   # right
-
-            # Longitudinal edges from z=0 to z=+bd.
-            a0, a1 = ba(0.0), ba(bd)
-            for x in xs:
-                line((x, -half_h, 0.0), (x, -half_h, bd), a0, a1)   # floor
-                line((x,  half_h, 0.0), (x,  half_h, bd), a0, a1)   # ceiling
-            for y in ys:
-                line((-half_w, y, 0.0), (-half_w, y, bd), a0, a1)   # left
-                line(( half_w, y, 0.0), ( half_w, y, bd), a0, a1)   # right
 
         self._v = np.array(v, dtype=np.float32)
         self._c = np.array(c, dtype=np.float32)
@@ -1260,6 +1296,77 @@ class GridRoom:
         glDepthMask(GL_TRUE)
         glDisable(GL_BLEND)
         glColor4f(1.0, 1.0, 1.0, 1.0)
+
+
+class PlaceableObjects:
+    """World Builder — draws user-placed builtin primitives inside the Grid Room.
+
+    Drawn in WORLD space immediately after GridRoom (no Earth-anchor translate), so
+    a cell maps straight onto the grid via Worlds.placeable.grid_to_world. v1 is
+    fixed-function flat/emissive colour — the frozen shaders/ are provably untouched
+    and there is no live GL-compile risk (see plan §4).
+
+    Meshes are cached singletons keyed by primitive name and built lazily on first
+    use — never rebuilt per frame (the codebase is strict about per-frame
+    allocation). Objects WRITE depth (solid), so they occlude the blended grid lines
+    correctly, unlike GridRoom which leaves the depth mask off.
+    """
+
+    def __init__(self) -> None:
+        self._meshes: dict[str, Mesh] = {}
+
+    def _mesh(self, model: str):
+        m = self._meshes.get(model)
+        if m is None:
+            if model == "builtin:cube":
+                v, n, i = make_cube()
+                m = Mesh(v, n, None, i)
+            elif model == "builtin:sphere":
+                v, n, u, i = make_sphere(1.0, 24, 24)
+                m = Mesh(v, n, u, i)
+            elif model == "builtin:cylinder":
+                v, n, i = make_cylinder()
+                m = Mesh(v, n, None, i)
+            else:
+                return None
+            self._meshes[model] = m
+        return m
+
+    def draw(self, objects, half_w, half_h, depth, divisions) -> None:
+        objs = sanitize_objects(objects, divisions)   # allowlist + clamp + count cap
+        if not objs:
+            return
+
+        glUseProgram(0)
+        glDisable(GL_TEXTURE_2D)
+        glDisable(GL_LIGHTING)            # v1: flat emissive; lit look is a later option
+        glEnable(GL_DEPTH_TEST)
+        glDepthMask(GL_TRUE)             # solid → write depth so objects occlude the grid
+        glDisable(GL_BLEND)
+
+        for obj in objs:
+            mesh = self._mesh(obj["model"])
+            if mesh is None:
+                continue
+            wx, wy, wz = grid_to_world(*obj["grid_position"],
+                                       half_w, half_h, depth, divisions)
+            r, g, b = obj["color"]
+            rx, ry, rz = obj["rotation"]
+            s = obj["scale"]
+            glPushMatrix()
+            glTranslatef(wx, wy, wz)
+            if ry:
+                glRotatef(ry, 0.0, 1.0, 0.0)
+            if rx:
+                glRotatef(rx, 1.0, 0.0, 0.0)
+            if rz:
+                glRotatef(rz, 0.0, 0.0, 1.0)
+            glScalef(s, s, s)
+            glColor4f(r, g, b, 1.0)
+            mesh.draw()
+            glPopMatrix()
+
+        glColor4f(1.0, 1.0, 1.0, 1.0)   # restore default colour for later draws
 
 
 def draw_window_frame(half_w: float, half_h: float,

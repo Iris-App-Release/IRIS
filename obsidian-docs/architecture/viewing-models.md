@@ -23,24 +23,33 @@ sources:
 
 # Viewing Models — one camera, two world styles
 
+> [!important] UPDATED 2026-06-02 (final) — enclosures do NOT pan
+> The "capped look" described throughout this page (`LOOK_ENCLOSURE_AMP = 0.35`) was
+> **removed**: any non-zero pan still shears the anchored rim. Enclosure worlds now share
+> Earth's **zoom and parallax** but their rotational look is held at **zero** — they don't
+> pan. Panning is exclusive to the object/sphere worlds. Mechanism:
+> `if world.enveloping: yaw_target = pitch_tgt = 0.0` in `app_engine.py`; `sim_envelop`
+> pins enclosure pan ≡ 0. Read the capped-look detail below as history. (log:
+> [[2026-06-02_grids-dont-pan]].)
+
 IRIS turns head-depth into an on-screen depth response with **one shared camera
-model**: the frozen off-axis "window" core ([[off-axis-projection]]), telephoto
-eye-distance scaling, and a proximity-gated rotational look. Every world — object or
-enclosure — uses it identically, so they all **zoom the same way and the look fades in
-over the same head-z distances.**
+model**: the frozen off-axis "window" core ([[off-axis-projection]]) and telephoto
+eye-distance scaling, applied identically to every world, so they all **zoom the same
+way**. The object worlds additionally get a proximity-gated rotational **look** (pan);
+the enclosure worlds do **not**.
 
 What differs is **world style**, not camera math:
 - **Object / open worlds** ([[earth]], [[the-watcher]]) — a hero body floating in empty
   or atmospheric space, no front boundary; the look pans freely.
 - **Rim-anchored enclosure worlds** ([[grid-room]], [[gem]]) — geometry whose front rim
   sits on the glass at `z = 0`, bezel-locked to the screen edges as a hard anchor;
-  because a pan would shear that visible rim, the look **amplitude is capped**.
+  because a pan would shear that visible rim, the rotational look is **zero** (no pan).
 
 The switch is one declarative flag, `rendering.enveloping` (default `false`), read by
 [[world-system]] (`WorldRuntime.enveloping`) and branched on in
 `Launcher/app_engine.py`. **No camera math changes between the two** —
-`Engine/camera_math.py` stays frozen; the *only* engine difference is a single
-post-multiply that caps the enclosure look pan (`LOOK_ENCLOSURE_AMP`).
+`Engine/camera_math.py` stays frozen; the *only* engine difference is that the enclosure
+branch zeroes the look pan.
 
 > [!note] History — there used to be two depth responses
 > Through 2026-06-02 the enclosure worlds used a genuinely different depth mechanism: a

@@ -27,12 +27,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "full-project-log.md",
+                "file": "architecture/grid-creator-tool-plan.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "full-project-log"
+              "title": "grid-creator-tool-plan"
             }
           }
         ],
@@ -89,8 +89,7 @@
               "title": "Bookmarks"
             }
           }
-        ],
-        "currentTab": 1
+        ]
       }
     ],
     "direction": "horizontal",
@@ -199,8 +198,16 @@
   },
   "active": "67f53150df777127",
   "lastOpenFiles": [
-    "log-entries/2026-05-31_gem-polish.md",
+    "architecture/grid-api-customization.md.tmp.60673.bf901241b552",
+    "architecture/grid-creator-tool-plan.md",
+    "architecture/constraints.md.tmp.59381.5a8aa151755d",
     "full-project-log.md",
+    "what-makes-perspective-optimal.md.tmp.59381.2ead1c4d45cc",
+    "what-makes-perspective-optimal.md.tmp.59381.550f0038f89e",
+    "log-entries/2026-06-02_grids-dont-pan.md",
+    "worlds/grid-room.md.tmp.59381.af2b1b7fc504",
+    "log-entries/2026-06-02_proscenium-rest-frame.md",
+    "log-entries/2026-05-31_gem-polish.md",
     "log-entries/2026-06-02_revert-exact-camera.md",
     "log-entries/2026-06-02_grid-sphere-merge.md",
     "log-entries/2026-06-02_enclosure-look-tune.md",
@@ -225,17 +232,10 @@
     "log-entries/2026-05-31_invalid-codesign.md",
     "log-entries/2026-05-31_camera-permission-bug.md",
     "log-entries/2026-05-31_camera-permission-bug.md.tmp.58597.298747e3e826",
-    "log-entries/2026-05-31_ingest.md",
     "log-entries",
-    "development/Claude-Interrupted.md",
-    "what-makes-perspective-optimal.md",
-    "grid_room.md",
     "index.md.tmp.51168.7d01d4df4cb9",
     "Untitled.canvas",
     "worlds/something-i-made-for-my-friends.gif",
-    "development/current-focus.md.tmp.1221.2a941b58e667",
-    "architecture/constraints.md.tmp.1221.922b6553f2f2",
-    "Untitled 1.canvas",
-    "development"
+    "Untitled 1.canvas"
   ]
 }

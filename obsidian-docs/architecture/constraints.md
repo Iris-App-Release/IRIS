@@ -49,11 +49,11 @@ by [[headless-simulation]].
   is the same on-screen size in every world. The **only** per-world difference: enclosure
   worlds (Grid Room, Gem) draw a front rim on the glass at `z = 0`, which the off-axis
   projection pins to the screen edges as a hard bezel anchor; a pan would shear that
-  visible rim, so for `enveloping` worlds the look pan is scaled by a single constant
-  `LOOK_ENCLOSURE_AMP = 0.35` (≈ 0 at rest via the proximity gate, small bounded max up
-  close). Object worlds are uncapped → byte-identical. `camera_math.py` is untouched (the
-  gate is the frozen `proximity`; the cap is a plain post-multiply). Pinned by
-  `sim_envelop.py`. *(The earlier per-world FORWARD DOLLY depth model — held `cz`
+  visible rim, so as of **2026-06-02 (final)** the enclosure rotational look is held at
+  **zero — grids do not pan** (`if world.enveloping: yaw_target = pitch_tgt = 0.0`).
+  *(An earlier capped pan `LOOK_ENCLOSURE_AMP = 0.35` was removed — any non-zero pan still
+  shears the anchor.)* Object/sphere worlds keep the full proximity-gated look →
+  byte-identical. `camera_math.py` untouched. Pinned by `sim_envelop.py` (enclosure pan ≡ 0). *(The earlier per-world FORWARD DOLLY depth model — held `cz`
   constant and translated the scene toward the eye to "move into the room" — was removed
   because it grew a foreground object ~3.6× and diverged from Earth's size; the user asked
   for the grid worlds to behave exactly like the sphere worlds. See [[off-axis-projection]]

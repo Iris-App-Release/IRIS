@@ -19,11 +19,12 @@ never have to be re-derived from chat history or source again.
 > [!warning] SUPERSEDED (2026-06-02, final revert) — the **forward dolly** described in
 > this entry was REMOVED. The user asked that the grid worlds' zoom and look operate
 > EXACTLY like the sphere worlds (so the gem appears the same size as Earth at any
-> distance), anchored. Enclosures now use Earth's telephoto `cz` and the frozen
-> `proximity(hz)` gate; the *only* enclosure difference is a single look-amplitude cap
-> `LOOK_ENCLOSURE_AMP = 0.35` that protects the bezel-locked rim from shearing. There is
-> no `dolly`, no `DOLLY_*`, and no `engage·amp` look split any more. See the
-> "revert+resimplify" entry in [[log]], [[viewing-models]], [[constraints]] and
+> distance), anchored. Enclosures now use Earth's telephoto `cz` and parallax. **As of the
+> later 2026-06-02 (final) decision, enclosures do NOT pan at all** — the rotational look
+> is held at zero, because an anchored rim and any pan shear each other (an earlier capped
+> pan `LOOK_ENCLOSURE_AMP = 0.35` was also removed). There is no `dolly`, no `DOLLY_*`, no
+> `engage·amp` split, and no enclosure look. Panning is exclusive to the sphere worlds. See
+> [[2026-06-02_grids-dont-pan]], [[viewing-models]], [[constraints]] and
 > [[what-makes-perspective-optimal]]. Read the rest of this entry only as history.
 
 **Symptom.** In the Grid Room and the Gem world, leaning IN made the grid squares

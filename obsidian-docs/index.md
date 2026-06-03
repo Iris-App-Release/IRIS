@@ -76,6 +76,7 @@ Obsidian vault to browse them as a graph.
 | [Design Decisions](architecture/design-decisions.md) | The *why* behind every major architectural choice | architecture |
 | [Menu Bar UI](architecture/menu-bar-ui.md) | Always-visible menu bar icon for exit, camera toggle, and settings access (solves "trapped in wallpaper" UX) | design-decision |
 | [Grid API Customization](architecture/grid-api-customization.md) | Spatial coordinate system for safe, user-friendly world asset placement (locked physics, mutable assets only) | design-decision |
+| [Grid Creator Tool — Plan](architecture/grid-creator-tool-plan.md) | Code-grounded implementation plan for the Claude-assisted grid object-placement creator tool + the monetization track it unlocks | implementation-plan |
 
 ## Project status
 
