@@ -506,9 +506,9 @@ class DemoOverlay:
         btn_gap = int(8 * S)
 
         # ── Tab bar (always visible across all tabs) ──────────────────────────
-        tab_specs = [("worlds", "Worlds"), ("community", "Community"),
-                     ("settings", "Settings")]
-        tab_w, tab_h = int(110 * S), int(36 * S)
+        tab_specs = [("worlds", "Worlds"), ("world_builder", "World Builder"),
+                     ("community", "Community"), ("settings", "Settings")]
+        tab_w, tab_h = int(124 * S), int(36 * S)
         tab_gap = int(6 * S)
         tb_pad = int(6 * S)
         total_tab_w = len(tab_specs) * tab_w + (len(tab_specs) - 1) * tab_gap
@@ -753,6 +753,13 @@ class DemoOverlay:
                 _glass_button(layer, r, cam_label, self.fnt_btn, primary=False,
                               hover_t=self._hover_anim.get("camera_toggle", 0.0), s=S)
 
+        # ── World Builder tab — blank labeled grid stage on white ─────────────
+        elif self._active_tab == "world_builder":
+            layer.fill(BTN_FILL_REST)                       # full-bleed blank white
+            _text_shadow(layer, "World Builder", self.fnt_btn, BTN_TEXT,
+                         (cx, self._content_top), S)
+            self._draw_builder_canvas(layer, S)
+
         # ── Community tab — blank white page, coming soon ─────────────────────
         elif self._active_tab == "community":
             layer.fill(BTN_FILL_REST)                       # full-bleed blank white
@@ -769,6 +776,7 @@ class DemoOverlay:
         # hover feedback is instant/crisp (dark grey container, white active pill).
         _aa_round_rect(surf, self._tabbar, GREY_CONTAINER, int(_TABBAR_CORNER * S))
         for key, text in (("tab:worlds", "Worlds"),
+                          ("tab:world_builder", "World Builder"),
                           ("tab:community", "Community"),
                           ("tab:settings", "Settings")):
             r = self._buttons[key]
@@ -798,6 +806,78 @@ class DemoOverlay:
 
         self._cached = surf
         return surf
+
+    # ── World Builder stage ────────────────────────────────────────────────────────
+
+    def _draw_builder_canvas(self, layer, S) -> None:
+        """The World Builder stage: a clean black wireframe grid on the white page.
+
+        The origin is the BACK-BOTTOM-LEFT corner; three labeled axes emanate from
+        it — X to the right, Y up, Z toward the viewer — giving a describe-your-world
+        prompt an unambiguous cell coordinate frame (the same one
+        Worlds/placeable.grid_to_world maps into the live Grid Room). Static: no
+        per-frame state, so the cached-surface signature need not change for it.
+        """
+        D = 8                                   # cells per axis (grid_room default)
+        cell = 40 * S                           # screen px per cell along X and Y
+        dzx, dzy = -22 * S, 13 * S              # one +Z (toward viewer) step → down-left
+
+        # Centre the projected bounding box in the area below the tab bar / title.
+        cxp = self.w / 2
+        top = (self._content_top or int(120 * S)) + int(46 * S)
+        cyp = (top + self.h) / 2
+        ox = cxp - (D * cell + D * dzx) / 2
+        oy = cyp - (D * dzy - D * cell) / 2
+
+        def P(gx, gy, gz):
+            return (int(ox + gx * cell + gz * dzx),
+                    int(oy - gy * cell + gz * dzy))
+
+        GRID = (210, 212, 219)                  # faint interior grid lines
+        EDGE = (120, 123, 132)                  # box edges (shape readability)
+        AXIS = (12, 12, 16)                     # bold labeled axes (near-black)
+        TICK = (70, 70, 80)
+
+        def gline(a, b, color, width=1):
+            pygame.draw.line(layer, color, a, b, width)
+
+        # Three faces meeting at the origin (floor, back wall, left wall).
+        for i in range(D + 1):
+            gline(P(i, 0, 0), P(i, 0, D), GRID)          # floor: lines along Z
+            gline(P(0, 0, i), P(D, 0, i), GRID)          # floor: lines along X
+            gline(P(i, 0, 0), P(i, D, 0), GRID)          # back wall: lines along Y
+            gline(P(0, i, 0), P(D, i, 0), GRID)          # back wall: lines along X
+            gline(P(0, i, 0), P(0, i, D), GRID)          # left wall: lines along Z
+            gline(P(0, 0, i), P(0, D, i), GRID)          # left wall: lines along Y
+
+        # Box outline edges, a touch darker.
+        c = {k: P(*k) for k in [(0,0,0),(D,0,0),(0,D,0),(0,0,D),
+                                (D,D,0),(D,0,D),(0,D,D),(D,D,D)]}
+        for a, b in [((0,0,0),(D,0,0)),((0,0,0),(0,D,0)),((0,0,0),(0,0,D)),
+                     ((D,0,0),(D,D,0)),((D,0,0),(D,0,D)),((0,D,0),(D,D,0)),
+                     ((0,D,0),(0,D,D)),((0,0,D),(D,0,D)),((0,0,D),(0,D,D)),
+                     ((D,D,0),(D,D,D)),((D,0,D),(D,D,D)),((0,D,D),(D,D,D))]:
+            gline(c[a], c[b], EDGE, 1)
+
+        # Three bold labeled axes from the origin (back-bottom-left).
+        aw = max(2, int(2 * S))
+        gline(P(0, 0, 0), P(D, 0, 0), AXIS, aw)          # X → right
+        gline(P(0, 0, 0), P(0, D, 0), AXIS, aw)          # Y → up
+        gline(P(0, 0, 0), P(0, 0, D), AXIS, aw)          # Z → toward viewer
+
+        # Numeric ticks (0..D) along each axis, offset clear of the lines.
+        tdx, tdy = int(13 * S), int(13 * S)
+        for i in range(D + 1):
+            px, py = P(i, 0, 0); _text_shadow(layer, str(i), self.fnt_small, TICK, (px, py + tdy), S)
+            px, py = P(0, i, 0); _text_shadow(layer, str(i), self.fnt_small, TICK, (px - tdx, py), S)
+            if i:
+                px, py = P(0, 0, i); _text_shadow(layer, str(i), self.fnt_small, TICK, (px - tdx, py + int(5 * S)), S)
+
+        # Axis names at their far ends + the origin marker.
+        ex, ey = P(D, 0, 0); _text_shadow(layer, "right  (X)", self.fnt_hint, AXIS, (ex + int(40 * S), ey + int(6 * S)), S)
+        ex, ey = P(0, D, 0); _text_shadow(layer, "up  (Y)", self.fnt_hint, AXIS, (ex, ey - int(20 * S)), S)
+        ex, ey = P(0, 0, D); _text_shadow(layer, "toward you  (Z)", self.fnt_hint, AXIS, (ex - int(44 * S), ey + int(20 * S)), S)
+        ox0, oy0 = P(0, 0, 0); _text_shadow(layer, "origin (0,0,0)", self.fnt_small, GREY_TEXT_DIM, (ox0 + int(2 * S), oy0 - int(16 * S)), S)
 
     # ── GL bridge ─────────────────────────────────────────────────────────────────
 
