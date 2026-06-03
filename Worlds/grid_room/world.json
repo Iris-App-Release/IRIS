@@ -18,10 +18,10 @@
     "rotation_speed": 0.0,
     "show_icons": false,
     "show_window_frame": true,
-    "grid_color": [0.30, 0.72, 1.0],
+    "grid_color": [0.0, 0.0, 0.0],
     "grid_depth": 18.0,
     "grid_divisions": 8,
-    "clear_color": [0.01, 0.012, 0.022]
+    "clear_color": [1.0, 1.0, 1.0]
   },
   "assets": {
     "placeable_objects": [

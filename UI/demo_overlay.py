@@ -260,8 +260,14 @@ class DemoOverlay:
         # Session state
         self.onboarded = bool(self._pref("onboarded", False))
 
-        # World selection and active tab (Worlds / Community / Settings).
+        # World selection and active tab (Worlds / World Builder / Community /
+        # Settings).
         self._active_tab = "worlds"
+        # World Builder has two sub-views of ONE world (grid_room): the 2-D grid
+        # editor and the live "Preview" (the real off-axis render). Switching
+        # between them never edits the world, so all state persists for free.
+        self._wb_view = "grid"            # "grid" | "preview"
+        self._wb_prev_world = None        # world to restore when leaving the tab
         self._world_keys, self._world_names = self._load_worlds()
         self.active_world = str(self._pref("world", "earth"))
 
@@ -406,10 +412,14 @@ class DemoOverlay:
 
     @property
     def preview_active(self) -> bool:
-        """Engine reads this each frame: render the live 3-D world preview ONLY
-        while the Worlds tab is showing. On Settings/Community the engine skips
-        the (expensive) scene draw — the tab shows a solid card instead."""
-        return self._active_tab == "worlds"
+        """Engine reads this each frame: render the live 3-D world preview while
+        the Worlds tab is showing, AND while World Builder is in its Preview view
+        (the real off-axis conversion of the grid world the user is building). On
+        Settings/Community and the World Builder grid editor the engine skips the
+        (expensive) scene draw — those show a solid card instead."""
+        return (self._active_tab == "worlds"
+                or (self._active_tab == "world_builder"
+                    and self._wb_view == "preview"))
 
     def _status_text(self) -> str:
         st = STRINGS["demo_ui"]["status"]
@@ -573,6 +583,17 @@ class DemoOverlay:
                     self._content_top + int(60 * S),
                     cam_btn_w, cam_btn_h)
 
+            elif self._active_tab == "world_builder":
+                if self._wb_view == "grid":
+                    # Large "Preview →" pill, centred beneath the grid canvas.
+                    pw, ph = int(220 * S), int(54 * S)
+                    self._buttons["wb_preview"] = pygame.Rect(
+                        w // 2 - pw // 2, h - ph - int(40 * S), pw, ph)
+                else:   # preview view → "← Back to Grid" pill, top-left.
+                    bw, bh = int(196 * S), int(46 * S)
+                    self._buttons["wb_back"] = pygame.Rect(
+                        int(28 * S), int(26 * S), bw, bh)
+
     def _hit(self, pos) -> str | None:
         for key, rect in self._buttons.items():
             if rect.collidepoint(pos):
@@ -599,8 +620,27 @@ class DemoOverlay:
         if key.startswith("tab:"):
             tab = key.split(":", 1)[1]
             if tab != self._active_tab:
+                # World Builder edits ONE world (grid_room). Entering the tab
+                # makes it the working world (remembering the prior selection);
+                # leaving restores it, so the Worlds-tab choice is untouched.
+                if tab == "world_builder":
+                    self._wb_prev_world = self.active_world
+                    self._wb_view = "grid"
+                    self._set_world("grid_room")
+                elif self._active_tab == "world_builder" and self._wb_prev_world:
+                    self._set_world(self._wb_prev_world)
                 self._active_tab = tab
                 self._compute_layout()
+            return
+        if key == "wb_preview":
+            # Enter the live Preview — the real off-axis render of the grid world.
+            self._wb_view = "preview"
+            self._set_world("grid_room")
+            self._compute_layout()
+            return
+        if key == "wb_back":
+            self._wb_view = "grid"
+            self._compute_layout()
             return
         if key == "primary":
             _label, action = self._primary()
@@ -634,6 +674,14 @@ class DemoOverlay:
             self._cycle_world(-1 if key == "world_prev" else +1)
         elif key == "camera_toggle":
             self._set_camera_enabled(not self.camera_enabled)
+
+    def _set_world(self, name: str) -> None:
+        """Make `name` the active world (engine hot-swaps from the saved pref next
+        frame). No-op if it is already active or not a known world."""
+        if name == self.active_world or name not in (self._world_keys or []):
+            return
+        self.active_world = name
+        self._save_pref("world", name)
 
     def _cycle_world(self, step: int) -> None:
         """Instantly switch to the previous/next world. No animation — the engine
@@ -686,7 +734,7 @@ class DemoOverlay:
             round(self._ctrl_alpha, 2),
             self._primary(), self.live, self.daemon_running, self.desktop_paused,
             self.tracking_active, self.camera_denied,
-            self._active_tab, self.active_world, self.camera_enabled,
+            self._active_tab, self._wb_view, self.active_world, self.camera_enabled,
             self._toast[0] if self._toast else None,
             tuple(round(self._hover_anim.get(k, 0.0), 2) for k in self._buttons),
         )
@@ -753,12 +801,43 @@ class DemoOverlay:
                 _glass_button(layer, r, cam_label, self.fnt_btn, primary=False,
                               hover_t=self._hover_anim.get("camera_toggle", 0.0), s=S)
 
-        # ── World Builder tab — blank labeled grid stage on white ─────────────
+        # ── World Builder tab — grid editor / live preview ────────────────────
         elif self._active_tab == "world_builder":
-            layer.fill(BTN_FILL_REST)                       # full-bleed blank white
-            _text_shadow(layer, "World Builder", self.fnt_btn, BTN_TEXT,
-                         (cx, self._content_top), S)
-            self._draw_builder_canvas(layer, S)
+            if self._wb_view == "grid":
+                # Grid editor: the world (the big labeled box) dominates a white
+                # page; one large "Preview →" pill is the natural next step.
+                layer.fill(BTN_FILL_REST)                   # full-bleed blank white
+                self._draw_builder_canvas(layer, S)
+                if "wb_preview" in self._buttons:
+                    r = self._buttons["wb_preview"]
+                    _grey_container(layer, r.inflate(int(12 * S), int(12 * S)), s=S)
+                    _glass_button(layer, r, "Preview", self.fnt_btn,
+                                  primary=False,
+                                  hover_t=self._hover_anim.get("wb_preview", 0.0),
+                                  s=S)
+                    # Right-pointing chevron after the label (the font lacks "→").
+                    tw = self.fnt_btn.size("Preview")[0]
+                    ax, ay, a = r.centerx + tw // 2 + int(18 * S), r.centery, int(8 * S)
+                    _filled_rounded_poly(layer, [(ax - a, ay - a), (ax + a, ay),
+                                                 (ax - a, ay + a)], BTN_TEXT,
+                                         max(2, int(2 * S)))
+            else:
+                # Live preview: transparent over the real off-axis 3-D render
+                # (preview_active drives the engine); only a "← Back to Grid" pill
+                # floats top-left so the user can iterate without losing work.
+                if "wb_back" in self._buttons:
+                    r = self._buttons["wb_back"]
+                    _grey_container(layer, r.inflate(int(12 * S), int(12 * S)), s=S)
+                    _glass_button(layer, r, "Back to Grid", self.fnt_small,
+                                  primary=False,
+                                  hover_t=self._hover_anim.get("wb_back", 0.0),
+                                  s=S)
+                    # Left-pointing chevron before the label (the font lacks "←").
+                    tw = self.fnt_small.size("Back to Grid")[0]
+                    ax, ay, a = r.centerx - tw // 2 - int(16 * S), r.centery, int(7 * S)
+                    _filled_rounded_poly(layer, [(ax + a, ay - a), (ax - a, ay),
+                                                 (ax + a, ay + a)], BTN_TEXT,
+                                         max(2, int(2 * S)))
 
         # ── Community tab — blank white page, coming soon ─────────────────────
         elif self._active_tab == "community":
@@ -810,74 +889,94 @@ class DemoOverlay:
     # ── World Builder stage ────────────────────────────────────────────────────────
 
     def _draw_builder_canvas(self, layer, S) -> None:
-        """The World Builder stage: a clean black wireframe grid on the white page.
+        """The World Builder stage: the world the user is building, drawn LARGE.
 
-        The origin is the BACK-BOTTOM-LEFT corner; three labeled axes emanate from
-        it — X to the right, Y up, Z toward the viewer — giving a describe-your-world
-        prompt an unambiguous cell coordinate frame (the same one
-        Worlds/placeable.grid_to_world maps into the live Grid Room). Static: no
-        per-frame state, so the cached-surface signature need not change for it.
+        A STRICT 30° oblique (parallel) projection — the back wall is a true,
+        undistorted N×N grid of squares and the depth axis recedes down-left at
+        exactly 30°, so squares stay square and the figure reads like a clean
+        technical drawing rather than a foreshortened perspective. The box is fit
+        to ~86 % of the available area.
+
+        We address locations by SQUARE, not by point: the back wall has D×D
+        squares numbered 1..D. The dimension numbers are centred INSIDE the
+        squares — X (width) across the bottom row, Y (height) up the left column —
+        and both axes share square 1 in the bottom-left corner. Depth squares run
+        down-left along the floor's left edge. Static (no per-frame state).
         """
-        D = 8                                   # cells per axis (grid_room default)
-        cell = 40 * S                           # screen px per cell along X and Y
-        dzx, dzy = -22 * S, 13 * S              # one +Z (toward viewer) step → down-left
+        D = 8                                       # squares per axis (grid_room default)
+        ANG = math.radians(30.0)
+        ca, sa = math.cos(ANG), math.sin(ANG)       # exact 30° oblique direction
+        dr = 0.55                                   # depth foreshortening (cabinet-ish)
 
-        # Centre the projected bounding box in the area below the tab bar / title.
-        cxp = self.w / 2
-        top = (self._content_top or int(120 * S)) + int(46 * S)
-        cyp = (top + self.h) / 2
-        ox = cxp - (D * cell + D * dzx) / 2
-        oy = cyp - (D * dzy - D * cell) / 2
+        # Available builder area: below the tab bar, above the "Preview →" pill.
+        pad = int(72 * S)
+        top = (self._content_top or int(120 * S)) + int(14 * S)
+        btn = self._buttons.get("wb_preview")
+        bottom = (btn.top - int(26 * S)) if btn else (self.h - int(120 * S))
+        region_w, region_h = self.w - pad * 2, max(int(80 * S), bottom - top)
+        rcx, rcy = self.w / 2, (top + bottom) / 2
+
+        # Fit: figure spans D + D·dr·cos30 wide and D + D·dr·sin30 tall (in cell
+        # units u). Solve u so the figure fills ~86 % of the area, then centre it.
+        fig_w = D * (1 + dr * ca)
+        fig_h = D * (1 + dr * sa)
+        u = min(0.86 * region_w / fig_w, 0.86 * region_h / fig_h)
+        v = dr * u                                  # depth-cell length on screen
+        # Origin = back-bottom-left corner; centre the figure's bounding box.
+        ox = rcx - (D * u - D * v * ca) / 2.0
+        oy = rcy - (D * v * sa - D * u) / 2.0
 
         def P(gx, gy, gz):
-            return (int(ox + gx * cell + gz * dzx),
-                    int(oy - gy * cell + gz * dzy))
+            return (int(ox + gx * u - gz * v * ca),
+                    int(oy - gy * u + gz * v * sa))
 
-        GRID = (210, 212, 219)                  # faint interior grid lines
-        EDGE = (120, 123, 132)                  # box edges (shape readability)
-        AXIS = (12, 12, 16)                     # bold labeled axes (near-black)
-        TICK = (70, 70, 80)
+        GRID = (211, 213, 220)                      # faint interior grid lines
+        EDGE = (120, 123, 132)                      # receding edges + front frame
+        WALL = (20, 20, 26)                         # back-wall border (the focus)
+        TICK = (38, 38, 46)                         # X / Y square numbers
+        DEEP = GREY_TEXT_DIM                        # depth square numbers (subtle)
 
         def gline(a, b, color, width=1):
             pygame.draw.line(layer, color, a, b, width)
 
-        # Three faces meeting at the origin (floor, back wall, left wall).
+        def gaaline(a, b, color):
+            pygame.draw.aaline(layer, color, a, b)
+
+        # Floor grid (depth cue) — receding down-left at 30°.
         for i in range(D + 1):
-            gline(P(i, 0, 0), P(i, 0, D), GRID)          # floor: lines along Z
-            gline(P(0, 0, i), P(D, 0, i), GRID)          # floor: lines along X
-            gline(P(i, 0, 0), P(i, D, 0), GRID)          # back wall: lines along Y
-            gline(P(0, i, 0), P(D, i, 0), GRID)          # back wall: lines along X
-            gline(P(0, i, 0), P(0, i, D), GRID)          # left wall: lines along Z
-            gline(P(0, 0, i), P(0, D, i), GRID)          # left wall: lines along Y
-
-        # Box outline edges, a touch darker.
-        c = {k: P(*k) for k in [(0,0,0),(D,0,0),(0,D,0),(0,0,D),
-                                (D,D,0),(D,0,D),(0,D,D),(D,D,D)]}
-        for a, b in [((0,0,0),(D,0,0)),((0,0,0),(0,D,0)),((0,0,0),(0,0,D)),
-                     ((D,0,0),(D,D,0)),((D,0,0),(D,0,D)),((0,D,0),(D,D,0)),
-                     ((0,D,0),(0,D,D)),((0,0,D),(D,0,D)),((0,0,D),(0,D,D)),
-                     ((D,D,0),(D,D,D)),((D,0,D),(D,D,D)),((0,D,D),(D,D,D))]:
-            gline(c[a], c[b], EDGE, 1)
-
-        # Three bold labeled axes from the origin (back-bottom-left).
-        aw = max(2, int(2 * S))
-        gline(P(0, 0, 0), P(D, 0, 0), AXIS, aw)          # X → right
-        gline(P(0, 0, 0), P(0, D, 0), AXIS, aw)          # Y → up
-        gline(P(0, 0, 0), P(0, 0, D), AXIS, aw)          # Z → toward viewer
-
-        # Numeric ticks (0..D) along each axis, offset clear of the lines.
-        tdx, tdy = int(13 * S), int(13 * S)
+            gaaline(P(0, 0, i), P(D, 0, i), GRID)            # depth rings
+            gaaline(P(i, 0, 0), P(i, 0, D), GRID)            # receding floor lines
+        # Left wall grid.
         for i in range(D + 1):
-            px, py = P(i, 0, 0); _text_shadow(layer, str(i), self.fnt_small, TICK, (px, py + tdy), S)
-            px, py = P(0, i, 0); _text_shadow(layer, str(i), self.fnt_small, TICK, (px - tdx, py), S)
-            if i:
-                px, py = P(0, 0, i); _text_shadow(layer, str(i), self.fnt_small, TICK, (px - tdx, py + int(5 * S)), S)
+            gaaline(P(0, i, 0), P(0, i, D), GRID)
+            gaaline(P(0, 0, i), P(0, D, i), GRID)
+        # Back wall full grid (the square stage — width × height).
+        for i in range(D + 1):
+            gaaline(P(i, 0, 0), P(i, D, 0), GRID)            # vertical
+            gaaline(P(0, i, 0), P(D, i, 0), GRID)            # horizontal
 
-        # Axis names at their far ends + the origin marker.
-        ex, ey = P(D, 0, 0); _text_shadow(layer, "right  (X)", self.fnt_hint, AXIS, (ex + int(40 * S), ey + int(6 * S)), S)
-        ex, ey = P(0, D, 0); _text_shadow(layer, "up  (Y)", self.fnt_hint, AXIS, (ex, ey - int(20 * S)), S)
-        ex, ey = P(0, 0, D); _text_shadow(layer, "toward you  (Z)", self.fnt_hint, AXIS, (ex - int(44 * S), ey + int(20 * S)), S)
-        ox0, oy0 = P(0, 0, 0); _text_shadow(layer, "origin (0,0,0)", self.fnt_small, GREY_TEXT_DIM, (ox0 + int(2 * S), oy0 - int(16 * S)), S)
+        # Four receding edges + the front opening frame ("the glass").
+        for gx, gy in ((0, 0), (D, 0), (0, D), (D, D)):
+            gline(P(gx, gy, 0), P(gx, gy, D), EDGE, 1)
+        pygame.draw.lines(layer, EDGE, True,
+                          [P(0, 0, D), P(D, 0, D), P(D, D, D), P(0, D, D)], 1)
+        # Back-wall border — brightest line; this rectangle IS the world.
+        pygame.draw.lines(layer, WALL, True,
+                          [P(0, 0, 0), P(D, 0, 0), P(D, D, 0), P(0, D, 0)],
+                          max(2, int(2 * S)))
+
+        # ── Dimensions, centred INSIDE the squares (1..D), sharing square 1 ─────
+        # X (width): centred in each bottom-row square. Square c spans points
+        # [c-1,c], so its centre is at c-0.5; the bottom row centre-height is 0.5.
+        for c in range(1, D + 1):
+            _text_shadow(layer, str(c), self.fnt_small, TICK, P(c - 0.5, 0.5, 0), S)
+        # Y (height): centred in each left-column square; skip 1 — the bottom-left
+        # square already carries the shared "1".
+        for r in range(2, D + 1):
+            _text_shadow(layer, str(r), self.fnt_small, TICK, P(0.5, r - 0.5, 0), S)
+        # Depth: centred in the floor's left-edge squares, running down-left.
+        for d in range(1, D + 1):
+            _text_shadow(layer, str(d), self.fnt_small, DEEP, P(0.5, 0, d - 0.5), S)
 
     # ── GL bridge ─────────────────────────────────────────────────────────────────
 

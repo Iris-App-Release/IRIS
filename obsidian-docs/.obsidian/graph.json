@@ -46,7 +46,14 @@
       "query": "path:systems  ",
       "color": {
         "a": 1,
-        "rgb": 8300795
+        "rgb": 11628217
+      }
+    },
+    {
+      "query": "path:log-entries  ",
+      "color": {
+        "a": 1,
+        "rgb": 3366143
       }
     }
   ],
@@ -57,9 +64,9 @@
   "lineSizeMultiplier": 1.23674045138889,
   "collapse-forces": false,
   "centerStrength": 0,
-  "repelStrength": 0,
+  "repelStrength": 20,
   "linkStrength": 1,
   "linkDistance": 500,
-  "scale": 0.4745925125353912,
+  "scale": 0.1830233176275783,
   "close": false
 }
