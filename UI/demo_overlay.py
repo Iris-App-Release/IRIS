@@ -1480,13 +1480,13 @@ class DemoOverlay:
             ))
         _aa_round_rect(surf, self._tabbar, PANEL_SURFACE, tb_rad)
         tab_rad = int(_BTN_CORNER * S)
-        for key, text in (("tab:worlds", "Worlds"),
+        for key, text in (("tab:portals", "Portals"),
                           ("tab:portal_builder", "Portal Builder"),
                           ("tab:community", "Community"),
                           ("tab:settings", "Settings")):
             r = self._buttons[key]
             active = key == f"tab:{self._active_tab}"
-            builder = key == "tab:world_builder"
+            builder = key == "tab:portal_builder"
             # Drop shadow only on unoccupied, unpressed tabs — the occupied tab
             # reads as sunk-in so it gets no shadow for its entire tenure.
             if not active and self._press_key != key:
