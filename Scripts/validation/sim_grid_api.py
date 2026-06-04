@@ -41,7 +41,7 @@ import sys
 import numpy as np
 
 from Engine import camera_math as om
-from Portals.placeable import (
+from Worlds.placeable import (
     grid_to_world, sanitize_objects,
     BUILTIN_PRIMITIVES, MAX_OBJECTS, SCALE_MAX,
 )
@@ -91,9 +91,9 @@ def main() -> int:
 
     # ── 1. grid_to_world hits the documented anchors ────────────────────────────
     print("1. grid_to_world maps cells to live world coordinates (anchors exact)")
-    centre = grid_to_portal(0, 0, 0, hw, hh, DEPTH, D)
-    corner = grid_to_portal(D / 2, D / 2, 0, hw, hh, DEPTH, D)
-    back   = grid_to_portal(0, 0, D, hw, hh, DEPTH, D)
+    centre = grid_to_world(0, 0, 0, hw, hh, DEPTH, D)
+    corner = grid_to_world(D / 2, D / 2, 0, hw, hh, DEPTH, D)
+    back   = grid_to_world(0, 0, D, hw, hh, DEPTH, D)
     print(f"       [0,0,0]      → {tuple(round(v,4) for v in centre)}")
     print(f"       [D/2,D/2,0]  → {tuple(round(v,4) for v in corner)}")
     print(f"       [0,0,D]      → {tuple(round(v,4) for v in back)}")
@@ -106,7 +106,7 @@ def main() -> int:
           abs(back[2] + DEPTH) < 1e-9 and abs(back[0]) < 1e-9 and abs(back[1]) < 1e-9,
           f"z={back[2]:.3f} vs {-DEPTH}")
     check("X uses the D/2 scale against hw (cell ±1 is one division wide)",
-          abs(grid_to_portal(1, 0, 0, hw, hh, DEPTH, D)[0] - hw / (D / 2)) < 1e-9)
+          abs(grid_to_world(1, 0, 0, hw, hh, DEPTH, D)[0] - hw / (D / 2)) < 1e-9)
 
     # ── 2. Clamping pins out-of-range cells & junk inside valid ranges ───────────
     print("\n2. Clamping — out-of-bounds cells & junk values are pinned inside the box")

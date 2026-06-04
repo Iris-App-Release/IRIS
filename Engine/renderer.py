@@ -33,7 +33,7 @@ from Engine import camera_math as om
 from Engine.shader_loader import (
     load_program, load_texture_2d, bind_texture_unit, Uniforms,
 )
-from Portals.placeable import grid_to_portal, sanitize_objects
+from Worlds.placeable import grid_to_world, sanitize_objects
 
 HERE        = Path(__file__).parent.parent  # project root
 ASSETS      = HERE / "assets"
@@ -1470,7 +1470,7 @@ class PlaceableObjects:
     """World Builder — draws user-placed builtin primitives inside the Grid Room.
 
     Drawn in WORLD space immediately after GridRoom (no Earth-anchor translate), so
-    a cell maps straight onto the grid via Portals.placeable.grid_to_portal. v1 is
+    a cell maps straight onto the grid via Worlds.placeable.grid_to_world. v1 is
     fixed-function flat/emissive colour — the frozen shaders/ are provably untouched
     and there is no live GL-compile risk (see plan §4).
 
@@ -1516,7 +1516,7 @@ class PlaceableObjects:
             mesh = self._mesh(obj["model"])
             if mesh is None:
                 continue
-            wx, wy, wz = grid_to_portal(*obj["grid_position"],
+            wx, wy, wz = grid_to_world(*obj["grid_position"],
                                        half_w, half_h, depth, divisions)
             r, g, b = obj["color"]
             rx, ry, rz = obj["rotation"]

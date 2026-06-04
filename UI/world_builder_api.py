@@ -1,11 +1,11 @@
 """
-portal_builder_api.py — Claude-assisted authoring for the Portal Builder.
+world_builder_api.py — Claude-assisted authoring for the World Builder.
 
 Turns a natural-language description ("a glowing red sphere back-left, a pink
 cube near the glass") into a list of validated, clamped ``placeable_objects``
 dicts for the Grid Room (see obsidian-docs/architecture/grid-creator-tool-plan.md
 §8). The Claude call is the only new outward-facing piece; EVERYTHING it returns
-is run back through ``Portals.placeable.sanitize_objects`` before it can reach a
+is run back through ``Worlds.placeable.sanitize_objects`` before it can reach a
 draw call or disk, so a prompt can never break the box, escape the
 ``builtin:*`` allowlist, or touch a frozen field (grid_divisions / grid_depth /
 camera / shaders). Reliability is the product — any failure returns ``[]``.
@@ -63,7 +63,7 @@ def _resolve_api_key() -> str | None:
 
 
 def diagnose() -> dict:
-    """Readiness probe for tooling (e.g. the portal-builder CLI / skill).
+    """Readiness probe for tooling (e.g. the world-builder CLI / skill).
 
     Reports whether the two real-time gates are satisfied WITHOUT making a network
     call: the anthropic SDK import and a resolvable API key. Never raises.
@@ -95,10 +95,10 @@ def diagnose() -> dict:
 # sanitize_objects is the safety layer; import it robustly whether the repo root
 # or UI/ is the import root (mirrors demo_overlay's UI.buttons fallback).
 try:
-    from Portals.placeable import sanitize_objects
+    from Worlds.placeable import sanitize_objects
 except ImportError:                                       # pragma: no cover
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from Portals.placeable import sanitize_objects
+    from Worlds.placeable import sanitize_objects
 
 
 # claude-sonnet-4-6 is fast + capable for this short structured-output call;
@@ -106,7 +106,7 @@ except ImportError:                                       # pragma: no cover
 DEFAULT_MODEL = os.environ.get("IRIS_WB_MODEL", "claude-sonnet-4-6")
 
 SYSTEM_PROMPT = """\
-You are the IRIS Portal Builder authoring assistant. The user describes a scene to \
+You are the IRIS World Builder authoring assistant. The user describes a scene to \
 place inside a fixed 3-D "Grid Room" — a wireframe shadow-box that the monitor \
 looks into. You convert that description into placeable objects positioned on an \
 integer grid.
@@ -183,12 +183,12 @@ def _parse_json_objects(text: str):
     return data if isinstance(data, list) else []
 
 
-def generate_portal_objects(prompt: str, portal_def: dict) -> list[dict]:
+def generate_world_objects(prompt: str, world_def: dict) -> list[dict]:
     """Call Claude to generate placeable_objects from a natural-language prompt.
 
     Args:
         prompt: User description (e.g. "glowing red sphere back-left").
-        portal_def: Full portal.json dict (for context: grid_divisions, grid_depth).
+        world_def: Full world.json dict (for context: grid_divisions, grid_depth).
 
     Returns:
         List of validated, clamped placeable_objects dicts, or [] on any error
@@ -199,7 +199,7 @@ def generate_portal_objects(prompt: str, portal_def: dict) -> list[dict]:
     if not prompt:
         return []
 
-    rendering = (portal_def or {}).get("rendering", {}) or {}
+    rendering = (world_def or {}).get("rendering", {}) or {}
     try:
         divisions = int(rendering.get("grid_divisions", 8) or 8)
     except (TypeError, ValueError):

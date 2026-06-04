@@ -14,7 +14,7 @@ order=[("numpy",lambda:imp("numpy")),
        ("OpenGL.GL",lambda:imp("OpenGL.GL")),
        ("Engine.renderer",lambda:imp("Engine.renderer")),
        ("Engine.camera_math",lambda:imp("Engine.camera_math")),
-       ("Portals.portal_runtime",lambda:imp("Portals.portal_runtime")),
+       ("Worlds.world_runtime",lambda:imp("Worlds.world_runtime")),
        ("UI.demo_overlay",lambda:imp("UI.demo_overlay")),
        ("Tracking.face_tracker",lambda:imp("Tracking.face_tracker"))]
 total0=time.perf_counter()

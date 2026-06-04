@@ -4,7 +4,7 @@ world_builder_cli.py — drive the REAL World Builder pipeline from the terminal
 
 This is the headed-app's authoring flow, minus the GUI. It calls the EXACT same
 code the in-app **Send** button calls — `UI.world_builder_api.generate_world_objects`
-→ `Portals.placeable.sanitize_objects` — and mirrors the **Save** / **Delete Portal**
+→ `Worlds.placeable.sanitize_objects` — and mirrors the **Save** / **Delete World**
 semantics from `UI/demo_overlay.py`. So running this is a faithful test of the live
 feature: if a prompt works here, it works in the app (same model, same system
 prompt, same clamps, same files). The `/world-builder-live` skill wraps this.
@@ -18,8 +18,8 @@ Subcommands:
   preview "<prompt>"           Generate (real Claude call) → write the grid_room
                                scratch + switch the active world to grid_room, so a
                                RUNNING app hot-reloads it into a live preview. (= Send)
-  save "<prompt>" [--name N]   Generate → commit a NEW Portals/<slug>/portal.json that
-                               joins the Portals-tab cycle. (= Send then Save)
+  save "<prompt>" [--name N]   Generate → commit a NEW Worlds/<slug>/world.json that
+                               joins the Worlds-tab cycle. (= Send then Save)
   list                         Show built-in vs user worlds + the active world.
   use <slug>                   Set the active world (~/.iris/preferences.json).
   delete <slug>                Delete a USER world dir (built-ins/path-escapes refused).
@@ -51,38 +51,38 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from Portals.placeable import sanitize_objects                      # noqa: E402
+from Worlds.placeable import sanitize_objects                      # noqa: E402
 from UI.world_builder_api import generate_world_objects, diagnose  # noqa: E402
 
 # Mirror UI/demo_overlay.py: worlds that ship with the app + the World Builder
 # scratch. These are never offered for deletion and never collide as a save slug.
-BUILTIN_PORTALS = {"earth", "gem", "the_watcher", "grid_room"}
+BUILTIN_WORLDS = {"earth", "gem", "the_watcher", "grid_room"}
 
 CONFIG_DIR = Path.home() / ".iris"
 PREFS_FILE = CONFIG_DIR / "preferences.json"
 
 
-# ── paths (match demo_overlay._portals_dir / _grid_room_path) ──────────────────
-def portals_dir(root: Path = ROOT) -> Path:
+# ── paths (match demo_overlay._worlds_dir / _grid_room_path) ──────────────────
+def worlds_dir(root: Path = ROOT) -> Path:
     wdir = root / "Worlds"
     return wdir if wdir.exists() else root / "worlds"
 
 
 def grid_room_path(root: Path = ROOT) -> Path:
-    return portals_dir(root) / "grid_room" / "portal.json"
+    return worlds_dir(root) / "grid_room" / "world.json"
 
 
-def list_portal_keys(root: Path = ROOT) -> list[str]:
-    wd = portals_dir(root)
+def list_world_keys(root: Path = ROOT) -> list[str]:
+    wd = worlds_dir(root)
     if not wd.exists():
         return []
     return sorted(p.name for p in wd.iterdir()
-                  if p.is_dir() and (p / "portal.json").exists())
+                  if p.is_dir() and (p / "world.json").exists())
 
 
-def portal_display_name(slug: str, root: Path = ROOT) -> str:
+def world_display_name(slug: str, root: Path = ROOT) -> str:
     try:
-        d = json.loads((portals_dir(root) / slug / "portal.json").read_text())
+        d = json.loads((worlds_dir(root) / slug / "world.json").read_text())
         return d.get("name", slug)
     except Exception:
         return slug
@@ -111,19 +111,19 @@ def save_pref(key: str, value) -> None:
         pass
 
 
-# ── naming (match demo_overlay._derive_portal_name / _unique_portal_slug) ────────
-def derive_portal_name(prompt: str) -> str:
+# ── naming (match demo_overlay._derive_world_name / _unique_world_slug) ────────
+def derive_world_name(prompt: str) -> str:
     words = re.findall(r"[A-Za-z0-9]+", prompt or "")[:5]
     if not words:
         return "My World"
     return " ".join(w.capitalize() for w in words)[:40]
 
 
-def unique_portal_slug(name: str, root: Path = ROOT) -> str:
-    base = re.sub(r"[^a-z0-9]+", "_", (name or "").lower()).strip("_") or "portal"
-    existing = set(list_portal_keys(root)) | BUILTIN_PORTALS
+def unique_world_slug(name: str, root: Path = ROOT) -> str:
+    base = re.sub(r"[^a-z0-9]+", "_", (name or "").lower()).strip("_") or "world"
+    existing = set(list_world_keys(root)) | BUILTIN_WORLDS
     slug, i = base, 2
-    while slug in existing or (portals_dir(root) / slug).exists():
+    while slug in existing or (worlds_dir(root) / slug).exists():
         slug = f"{base}_{i}"
         i += 1
     return slug
@@ -168,11 +168,11 @@ def cmd_status(_args) -> int:
             print("\n  → provide a key (any one):")
             print("      export ANTHROPIC_API_KEY=sk-ant-...           # terminal launch")
             print("      printf %s \"sk-ant-...\" > ~/.iris/anthropic_key  # .app + terminal")
-    active = read_pref("portal", "earth")
-    keys = list_portal_keys()
-    user = [k for k in keys if k not in BUILTIN_PORTALS]
+    active = read_pref("world", "earth")
+    keys = list_world_keys()
+    user = [k for k in keys if k not in BUILTIN_WORLDS]
     print(f"\n  active world : {active}")
-    print(f"  built-ins    : {[k for k in keys if k in BUILTIN_PORTALS]}")
+    print(f"  built-ins    : {[k for k in keys if k in BUILTIN_WORLDS]}")
     print(f"  user worlds  : {user or '(none yet)'}")
     return 0
 
@@ -186,7 +186,7 @@ def cmd_preview(args) -> int:
     try:
         gr = _read_grid_room()
     except Exception as e:
-        print(f"error: couldn't read grid_room portal.json: {e}", file=sys.stderr)
+        print(f"error: couldn't read grid_room world.json: {e}", file=sys.stderr)
         return 1
     divisions = int(gr.get("rendering", {}).get("grid_divisions", 8) or 8)
 
@@ -208,7 +208,7 @@ def cmd_preview(args) -> int:
     # Mirror demo_overlay._write_scratch: preserve grid_room config, swap objects.
     gr.setdefault("assets", {})["placeable_objects"] = objects
     grid_room_path().write_text(json.dumps(gr, indent=2))
-    save_pref("portal", "grid_room")   # switch the live scene to the preview
+    save_pref("world", "grid_room")   # switch the live scene to the preview
     print(f"Preview ready — {len(objects)} object(s) in grid_room "
           "(a running app hot-reloads it live).")
     print(json.dumps(objects, indent=2))
@@ -216,12 +216,12 @@ def cmd_preview(args) -> int:
 
 
 def cmd_save(args) -> int:
-    """= Send then Save: generate → commit a NEW Portals/<slug>/portal.json."""
+    """= Send then Save: generate → commit a NEW Worlds/<slug>/world.json."""
     prompt = (args.prompt or "").strip()
     try:
         gr = _read_grid_room()
     except Exception as e:
-        print(f"error: couldn't read grid_room portal.json: {e}", file=sys.stderr)
+        print(f"error: couldn't read grid_room world.json: {e}", file=sys.stderr)
         return 1
     divisions = int(gr.get("rendering", {}).get("grid_divisions", 8) or 8)
 
@@ -240,13 +240,13 @@ def cmd_save(args) -> int:
         print("No objects generated — nothing saved.", file=sys.stderr)
         return 1
 
-    name = args.name or derive_portal_name(prompt)
-    slug = unique_portal_slug(name)
+    name = args.name or derive_world_name(prompt)
+    slug = unique_world_slug(name)
     gr["name"] = name
     gr.setdefault("assets", {})["placeable_objects"] = objects
-    wdir = portals_dir() / slug
+    wdir = worlds_dir() / slug
     wdir.mkdir(parents=True, exist_ok=True)
-    (wdir / "portal.json").write_text(json.dumps(gr, indent=2))
+    (wdir / "world.json").write_text(json.dumps(gr, indent=2))
     # Reset the scratch (the app does this after Save).
     blank = _read_grid_room()
     blank.setdefault("assets", {})["placeable_objects"] = []
@@ -258,22 +258,22 @@ def cmd_save(args) -> int:
 
 
 def cmd_list(_args) -> int:
-    keys = list_portal_keys()
-    active = read_pref("portal", "earth")
+    keys = list_world_keys()
+    active = read_pref("world", "earth")
     print("Worlds:")
     for k in keys:
-        tag = "builtin" if k in BUILTIN_PORTALS else "user"
+        tag = "builtin" if k in BUILTIN_WORLDS else "user"
         star = " *" if k == active else ""
-        print(f"  {k:28s} [{tag}]  “{portal_display_name(k)}”{star}")
+        print(f"  {k:28s} [{tag}]  “{world_display_name(k)}”{star}")
     print(f"\n  (* = active.  delete only works on [user] worlds.)")
     return 0
 
 
 def cmd_use(args) -> int:
-    if args.slug not in list_portal_keys():
+    if args.slug not in list_world_keys():
         print(f"error: no such world '{args.slug}'", file=sys.stderr)
         return 1
-    save_pref("portal", args.slug)
+    save_pref("world", args.slug)
     print(f"Active world → {args.slug} (a running app switches live).")
     return 0
 
@@ -281,16 +281,16 @@ def cmd_use(args) -> int:
 def cmd_delete(args) -> int:
     """Match demo_overlay._delete_world safety: refuse built-ins + path escapes."""
     slug = args.slug
-    wd = portals_dir()
+    wd = worlds_dir()
     target = (wd / slug).resolve()
-    if slug in BUILTIN_PORTALS or target.parent != wd.resolve() or not target.is_dir():
+    if slug in BUILTIN_WORLDS or target.parent != wd.resolve() or not target.is_dir():
         print(f"error: '{slug}' can't be deleted (built-in, missing, or escapes Worlds/).",
               file=sys.stderr)
         return 1
-    name = portal_display_name(slug)
+    name = world_display_name(slug)
     shutil.rmtree(target)
-    if read_pref("portal") == slug:
-        save_pref("portal", "earth")
+    if read_pref("world") == slug:
+        save_pref("world", "earth")
         print("  (was active — fell back to earth)")
     print(f"Deleted “{name}” (Worlds/{slug}/).")
     return 0
@@ -337,11 +337,11 @@ def cmd_selftest(_args) -> int:
         gr_dir.mkdir(parents=True)
         base = {"name": "Grid Room", "rendering": {"grid_divisions": 8, "grid_depth": 18.0},
                 "assets": {"placeable_objects": []}}
-        (gr_dir / "portal.json").write_text(json.dumps(base))
+        (gr_dir / "world.json").write_text(json.dumps(base))
         # seed a couple of built-ins so list/slug logic has company
         for b in ("earth", "the_watcher"):
             (root / "Worlds" / b).mkdir(parents=True)
-            (root / "Worlds" / b / "portal.json").write_text('{"name":"%s"}' % b)
+            (root / "Worlds" / b / "world.json").write_text('{"name":"%s"}' % b)
 
         divisions = 8
         objs = sanitize_objects(canned, divisions)
@@ -350,34 +350,34 @@ def cmd_selftest(_args) -> int:
               objs[0]["grid_position"] == (4.0, -4.0, 8.0))
 
         # preview = scratch write
-        gr = json.loads((gr_dir / "portal.json").read_text())
+        gr = json.loads((gr_dir / "world.json").read_text())
         gr.setdefault("assets", {})["placeable_objects"] = objs
-        (gr_dir / "portal.json").write_text(json.dumps(gr))
-        reloaded = json.loads((gr_dir / "portal.json").read_text())
+        (gr_dir / "world.json").write_text(json.dumps(gr))
+        reloaded = json.loads((gr_dir / "world.json").read_text())
         check("preview writes objects into grid_room scratch",
               len(reloaded["assets"]["placeable_objects"]) == 2)
 
         # save = new world dir (use the module fns against the temp root)
-        name = derive_portal_name("a glowing blue cube in the middle")
-        slug = unique_portal_slug(name, root)
+        name = derive_world_name("a glowing blue cube in the middle")
+        slug = unique_world_slug(name, root)
         check("derived a non-empty display name", bool(name) and name != "My World")
-        check("slug avoids built-ins/collisions", slug not in BUILTIN_PORTALS)
+        check("slug avoids built-ins/collisions", slug not in BUILTIN_WORLDS)
         nd = root / "Worlds" / slug
         nd.mkdir(parents=True)
         saved = dict(base); saved["name"] = name
         saved.setdefault("assets", {})["placeable_objects"] = objs
-        (nd / "portal.json").write_text(json.dumps(saved))
-        check("save created the new world dir", (nd / "portal.json").exists())
+        (nd / "world.json").write_text(json.dumps(saved))
+        check("save created the new world dir", (nd / "world.json").exists())
         check("saved world baked in the objects",
-              len(json.loads((nd / 'portal.json').read_text())['assets']['placeable_objects']) == 2)
+              len(json.loads((nd / 'world.json').read_text())['assets']['placeable_objects']) == 2)
         check("save baked NO change into a frozen field (grid_divisions intact)",
-              json.loads((nd / 'portal.json').read_text())['rendering']['grid_divisions'] == 8)
+              json.loads((nd / 'world.json').read_text())['rendering']['grid_divisions'] == 8)
 
         # delete safety
         wd_resolved = (root / "Worlds").resolve()
         for bad in ("earth", "the_watcher", "..", "../evil"):
             t = (root / "Worlds" / bad).resolve()
-            refused = bad in BUILTIN_PORTALS or t.parent != wd_resolved or not t.is_dir()
+            refused = bad in BUILTIN_WORLDS or t.parent != wd_resolved or not t.is_dir()
             check(f"delete refuses protected/escaping target '{bad}'", refused)
         # delete the user world for real
         shutil.rmtree(nd)

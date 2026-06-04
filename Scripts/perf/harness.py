@@ -8,8 +8,8 @@ path instead of the webcam/mediapipe. This isolates render + camera-math + world
 cost with no fullscreen takeover and no camera permission.
 
 Usage:
-  python Scripts/perf/harness.py --portal earth   --frames 600 --timing
-  python Scripts/perf/harness.py --portal grid_room --frames 600 --timing
+  python Scripts/perf/harness.py --world earth   --frames 600 --timing
+  python Scripts/perf/harness.py --world grid_room --frames 600 --timing
   (run under cProfile externally, see profile_cpu.py)
 
 Per-frame sequence mirrors app_engine.py lines ~484-899 for the chosen world.
@@ -34,7 +34,7 @@ from Engine.renderer import (
     draw_window_frame,
 )
 from Engine import camera_math as om
-from Portals.portal_runtime import PortalRuntime, resolve_portals_dir
+from Worlds.world_runtime import WorldRuntime, resolve_worlds_dir
 
 PREFS_FILE = Path.home() / ".iris" / "preferences.json"
 
@@ -102,7 +102,7 @@ def build_scene(world_name):
     stars  = timed("Stars",  Stars)
     earth  = timed("Earth",  Earth)
     icons  = timed("IconOrbit", lambda: IconOrbit(debug=False))
-    world  = timed("PortalRuntime", lambda: PortalRuntime(resolve_portals_dir(ROOT), tmp_prefs))
+    world  = timed("WorldRuntime", lambda: WorldRuntime(resolve_worlds_dir(ROOT), tmp_prefs))
     world.select(world_name)
 
     gem = room = placeables = None
@@ -247,7 +247,7 @@ def run(world_name, frames, timing, fps_cap):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--portal", default="earth")
+    ap.add_argument("--world", default="earth")
     ap.add_argument("--frames", type=int, default=600)
     ap.add_argument("--timing", action="store_true", help="glFinish each frame + per-stage stats")
     ap.add_argument("--fps", type=int, default=0, help="cap fps (0=uncapped, measure max throughput)")

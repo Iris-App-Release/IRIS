@@ -1,9 +1,9 @@
 """
-placeable.py — Pure (GL-free) coordinate transform + validation for Portal Builder
+placeable.py — Pure (GL-free) coordinate transform + validation for World Builder
 placeable objects in the Grid Room.
 
 This module is the safety + math layer for user-customizable objects placed inside
-the grid portal (see obsidian-docs/architecture/grid-creator-tool-plan.md). It is
+the grid world (see obsidian-docs/architecture/grid-creator-tool-plan.md). It is
 deliberately free of OpenGL and of the frozen camera/physics code, so:
 
   • the headless validation sim (Scripts/validation/sim_grid_api.py) can import and
@@ -12,7 +12,7 @@ deliberately free of OpenGL and of the frozen camera/physics code, so:
     allowlisted, clamped, and the whole set is count-capped before it ever reaches
     a draw call.
 
-The renderer (Engine/renderer.PlaceableObjects) imports `grid_to_portal` and
+The renderer (Engine/renderer.PlaceableObjects) imports `grid_to_world` and
 `sanitize_objects` from here and only does GL state + mesh draws on top.
 
 Coordinate convention (integer grid cells; see §3 of the plan):
@@ -38,9 +38,9 @@ def _clampf(v: float, lo: float, hi: float) -> float:
     return lo if v < lo else hi if v > hi else v
 
 
-def grid_to_portal(gx: float, gy: float, gz: float,
+def grid_to_world(gx: float, gy: float, gz: float,
                    hw: float, hh: float, depth: float, divisions: int):
-    """Map an integer grid cell to live portal coordinates.
+    """Map an integer grid cell to live world coordinates.
 
     Uses the LIVE aperture half-extents `hw`/`hh` (om.window_half_extents) — never
     the old hardcoded [-4,4] bounds — so a cell at ±D/2 lands exactly on the

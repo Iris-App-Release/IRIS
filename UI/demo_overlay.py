@@ -62,10 +62,10 @@ DAEMON_PID_FILE   = CONFIG_DIR / "daemon.pid"          # written when we spawn i
 TRACKING_OFF_FLAG = Path.home() / ".parallax_off"      # master switch the daemon polls
 CAMERA_OFF_FLAG   = CONFIG_DIR / "camera_off"          # Settings camera-access switch
 
-# Portals that ship with the app + the Portal Builder scratch canvas. These are
-# never offered in the Settings "Delete Portal" list and can never be removed — the
-# delete flow only ever touches USER-created portals inside Portals/ (see _delete_portal).
-BUILTIN_PORTALS = {"earth", "gem", "the_watcher", "grid_room"}
+# Worlds that ship with the app + the World Builder scratch canvas. These are
+# never offered in the Settings "Delete World" list and can never be removed — the
+# delete flow only ever touches USER-created worlds inside Worlds/ (see _delete_world).
+BUILTIN_WORLDS = {"earth", "gem", "the_watcher", "grid_room"}
 
 # Load localized strings from Config/Strings.json
 _STRINGS_PATH = Path(__file__).parent.parent / "Config" / "Strings.json"
@@ -411,9 +411,9 @@ class DemoOverlay:
         # editor and the live "Preview" (the real off-axis render). Switching
         # between them never edits the world, so all state persists for free.
         self._wb_view = "grid"            # "grid" | "preview"
-        self._wb_prev_portal = None        # world to restore when leaving the tab
+        self._wb_prev_world = None        # world to restore when leaving the tab
         # World Builder authoring state. The right card holds the focusable prompt
-        # input ("Describe your portal…") plus the Send + Save buttons; the left
+        # input ("Describe your world…") plus the Send + Save buttons; the left
         # card is a static explainer. All kept here so render stays allocation-free
         # (the surface is signature-cached) and the engine never sees this state.
         self._wb_prompt = ""              # current prompt text (<=150 chars)
@@ -421,7 +421,7 @@ class DemoOverlay:
         self._wb_prompt_rect = None
         # Transient preview: Send runs Claude and stores the sanitized objects here
         # (NOT saved). They're drawn on the Canvas Cube and mirrored to the grid_room
-        # scratch portal.json so the live Preview shows them too. `_wb_preview_gen`
+        # scratch world.json so the live Preview shows them too. `_wb_preview_gen`
         # bumps on every Send/Save/clear so the signature-cached surface invalidates.
         self._wb_preview_objects: list[dict] = []
         self._wb_preview_gen = 0
@@ -432,13 +432,13 @@ class DemoOverlay:
         self._delete_target: str | None = None
         self._delete_card = None
         # grid_room is the World Builder's working world — keep it loadable but
-        # OUT of the Portals-tab cycle (it's a blank canvas preview, not a world).
-        self._all_portal_keys, self._portal_names = self._load_portals()
-        self._portal_keys = [k for k in self._all_portal_keys
+        # OUT of the Worlds-tab cycle (it's a blank canvas preview, not a world).
+        self._all_world_keys, self._world_names = self._load_worlds()
+        self._world_keys = [k for k in self._all_world_keys
                             if k != "grid_room"] or ["earth"]
-        self.active_portal = str(self._pref("portal", "earth"))
-        if self.active_portal == "grid_room":
-            self.active_portal = "earth"   # never persist the canvas world here
+        self.active_world = str(self._pref("world", "earth"))
+        if self.active_world == "grid_room":
+            self.active_world = "earth"   # never persist the canvas world here
 
         # Camera-access control. Flag file is the live cross-process source of
         # truth the engine polls; persists across restarts.
@@ -507,16 +507,16 @@ class DemoOverlay:
 
     # ── World discovery (for the Browse Worlds picker) ──────────────────────────
 
-    def _load_portals(self):
+    def _load_worlds(self):
         """Return (keys, names): available world dir names + their display names,
-        via the same PortalLoader the engine uses. Falls back to Earth-only."""
+        via the same WorldLoader the engine uses. Falls back to Earth-only."""
         try:
-            from Portals.portal_loader import PortalLoader
+            from Worlds.world_loader import WorldLoader
             base = Path(__file__).resolve().parent.parent
-            wdir = base / "Portals"
+            wdir = base / "Worlds"
             if not wdir.exists():
-                wdir = base / "portals"
-            loader = PortalLoader(wdir)
+                wdir = base / "worlds"
+            loader = WorldLoader(wdir)
             keys = loader.list_available_worlds() or ["earth"]
             names = {}
             for k in keys:
@@ -586,12 +586,12 @@ class DemoOverlay:
     @property
     def preview_active(self) -> bool:
         """Engine reads this each frame: render the live 3-D world preview while
-        the Portals tab is showing, AND while Portal Builder is in its Preview view
+        the Worlds tab is showing, AND while World Builder is in its Preview view
         (the real off-axis conversion of the grid world the user is building). On
         Settings/Community and the World Builder grid editor the engine skips the
         (expensive) scene draw — those show a solid card instead."""
-        return (self._active_tab == "portals"
-                or (self._active_tab == "portal_builder"
+        return (self._active_tab == "worlds"
+                or (self._active_tab == "world_builder"
                     and self._wb_view == "preview"))
 
     def _status_text(self) -> str:
@@ -697,7 +697,7 @@ class DemoOverlay:
         btn_gap = int(8 * S)
 
         # ── Tab bar (always visible across all tabs) ──────────────────────────
-        tab_specs = [("portals", "Portals"), ("portal_builder", "Portal Builder"),
+        tab_specs = [("worlds", "Worlds"), ("world_builder", "World Builder"),
                      ("community", "Community"), ("settings", "Settings")]
         tab_w, tab_h = int(124 * S), int(36 * S)
         tab_gap = int(6 * S)
@@ -717,15 +717,15 @@ class DemoOverlay:
                 tx, self._tabbar.y + tb_pad, tab_w, tab_h)
 
         # ── Worlds tab ────────────────────────────────────────────────────────
-        if self._active_tab == "portals":
+        if self._active_tab == "worlds":
             # World navigation arrows — flanking the scene, pulled in from the
             # edges toward the centre. They switch worlds instantly (no carousel)
             # and stay until Desktop Mode is active (the whole HUD hides then).
             arrow = int(56 * S)
             edge_inset = int(120 * S)
             ay = h // 2 - arrow // 2
-            self._buttons["portal_prev"] = pygame.Rect(edge_inset, ay, arrow, arrow)
-            self._buttons["portal_next"] = pygame.Rect(
+            self._buttons["world_prev"] = pygame.Rect(edge_inset, ay, arrow, arrow)
+            self._buttons["world_next"] = pygame.Rect(
                 w - edge_inset - arrow, ay, arrow, arrow)
             self._content_top = None
 
@@ -772,7 +772,7 @@ class DemoOverlay:
                 if self._delete_list_open:
                     ry = self._buttons["delete_world"].bottom + int(14 * S)
                     row_h, row_gap = int(46 * S), int(8 * S)
-                    for k in self._deletable_portals():
+                    for k in self._deletable_worlds():
                         self._buttons[f"del:{k}"] = pygame.Rect(
                             w // 2 - cam_btn_w // 2, ry, cam_btn_w, row_h)
                         ry += row_h + row_gap
@@ -788,7 +788,7 @@ class DemoOverlay:
                     self._buttons["del_confirm_yes"] = pygame.Rect(
                         w // 2 + cgap // 2, by, bw, bh)
 
-            elif self._active_tab == "portal_builder":
+            elif self._active_tab == "world_builder":
                 # Both WB nav controls live on the tab-bar ROW as detached grey
                 # mini-bars holding a single tab-style pill — same top/height as
                 # the main tab bar, but visually disconnected from it.
@@ -884,14 +884,14 @@ class DemoOverlay:
         # The delete confirmation is modal: while it's up only Yes/No are live.
         if self._delete_target is not None:
             if key == "del_confirm_yes":
-                self._delete_portal(self._delete_target)
+                self._delete_world(self._delete_target)
             elif key == "del_confirm_no":
                 self._delete_target = None
                 self._compute_layout()
             return
         # World Builder prompt focus: clicking the input focuses it; clicking
         # anywhere else (Send, Save, empty space, another tab) blurs it.
-        if self._active_tab == "portal_builder" and self._wb_view == "grid":
+        if self._active_tab == "world_builder" and self._wb_view == "grid":
             self._wb_focused = (key == "wb_prompt")
         if key is None:
             return
@@ -911,20 +911,20 @@ class DemoOverlay:
             if tab != self._active_tab:
                 # World Builder edits ONE world (grid_room). Entering the tab
                 # makes it the working world (remembering the prior selection);
-                # leaving restores it, so the Portals-tab choice is untouched.
-                if tab == "portal_builder":
-                    self._wb_prev_portal = self.active_portal
+                # leaving restores it, so the Worlds-tab choice is untouched.
+                if tab == "world_builder":
+                    self._wb_prev_world = self.active_world
                     self._wb_view = "grid"
-                    self._set_portal("grid_room")
-                elif self._active_tab == "portal_builder" and self._wb_prev_portal:
-                    self._set_portal(self._wb_prev_portal)
+                    self._set_world("grid_room")
+                elif self._active_tab == "world_builder" and self._wb_prev_world:
+                    self._set_world(self._wb_prev_world)
                 self._active_tab = tab
                 self._compute_layout()
             return
         if key == "wb_preview":
             # Enter the live Preview — the real off-axis render of the grid world.
             self._wb_view = "preview"
-            self._set_portal("grid_room")
+            self._set_world("grid_room")
             self._compute_layout()
             return
         if key == "wb_back":
@@ -959,8 +959,8 @@ class DemoOverlay:
                 self._set_paused(False)
                 self._toast_msg(STRINGS["demo_ui"]["toasts"]["desktop_resumed"], 2.2)
             # action == "none" (camera settling): no-op, the label already says so.
-        elif key in ("portal_prev", "portal_next"):
-            self._cycle_portal(-1 if key == "portal_prev" else +1)
+        elif key in ("world_prev", "world_next"):
+            self._cycle_world(-1 if key == "world_prev" else +1)
         elif key == "camera_toggle":
             self._set_camera_enabled(not self.camera_enabled)
         elif key == "delete_world":
@@ -970,26 +970,26 @@ class DemoOverlay:
             self._delete_target = key.split(":", 1)[1]
             self._compute_layout()
 
-    def _set_portal(self, name: str) -> None:
+    def _set_world(self, name: str) -> None:
         """Make `name` the active world (engine hot-swaps from the saved pref next
         frame). No-op if it is already active or not a known world."""
-        if name == self.active_portal or name not in (self._all_portal_keys or []):
+        if name == self.active_world or name not in (self._all_world_keys or []):
             return
-        self.active_portal = name
-        self._save_pref("portal", name)
+        self.active_world = name
+        self._save_pref("world", name)
 
-    def _cycle_portal(self, step: int) -> None:
+    def _cycle_world(self, step: int) -> None:
         """Instantly switch to the previous/next world. No animation — the engine
         polls the saved preference live and swaps the scene next frame."""
-        keys = self._portal_keys or ["earth"]
-        if self.active_portal in keys:
-            i = keys.index(self.active_portal)
+        keys = self._world_keys or ["earth"]
+        if self.active_world in keys:
+            i = keys.index(self.active_world)
         else:
             i = 0
         name = keys[(i + step) % len(keys)]
-        self.active_portal = name
-        self._save_pref("portal", name)
-        self._toast_msg(f"World · {self._portal_names.get(name, name)}", 1.8)
+        self.active_world = name
+        self._save_pref("world", name)
+        self._toast_msg(f"World · {self._world_names.get(name, name)}", 1.8)
 
     # ── World Builder authoring (prompt input + Claude save pipeline) ───────────
 
@@ -1009,19 +1009,19 @@ class DemoOverlay:
 
     # ── Worlds-dir helpers (shared by Send / Save / Delete) ─────────────────────
 
-    def _portals_dir(self) -> Path:
-        """The Portals/ directory (handles the lowercase fallback), matching the
-        same base resolution `_load_portals` uses so rescans stay consistent."""
+    def _worlds_dir(self) -> Path:
+        """The Worlds/ directory (handles the lowercase fallback), matching the
+        same base resolution `_load_worlds` uses so rescans stay consistent."""
         base = Path(__file__).resolve().parent.parent
-        wdir = base / "Portals"
-        return wdir if wdir.exists() else base / "portals"
+        wdir = base / "Worlds"
+        return wdir if wdir.exists() else base / "worlds"
 
     def _grid_room_path(self) -> Path:
-        return self._portals_dir() / "grid_room" / "portal.json"
+        return self._worlds_dir() / "grid_room" / "world.json"
 
     def _write_scratch(self, objects: list[dict]) -> None:
-        """Mirror the previewed objects into the grid_room scratch portal.json so the
-        engine's mtime hot-reload (`portal_runtime.poll`) shows them in live Preview.
+        """Mirror the previewed objects into the grid_room scratch world.json so the
+        engine's mtime hot-reload (`world_runtime.poll`) shows them in live Preview.
         Best-effort: a write failure only means Preview lags, never a HUD crash."""
         try:
             path = self._grid_room_path()
@@ -1047,20 +1047,20 @@ class DemoOverlay:
 
         The sanitized objects are held in `_wb_preview_objects` (drawn on the Canvas
         Cube) and mirrored to the grid_room scratch world so the live Preview shows
-        them too. Nothing is committed to the user's Portals until Save. Every failure
+        them too. Nothing is committed to the user's Worlds until Save. Every failure
         only toasts; it never crashes the HUD."""
         prompt = (self._wb_prompt or "").strip()
         if not prompt:
-            self._toast_msg("Describe your portal first", 2.4)
+            self._toast_msg("Describe your world first", 2.4)
             return
         try:
-            from Portals.placeable import sanitize_objects
+            from Worlds.placeable import sanitize_objects
             try:
                 from UI.world_builder_api import generate_world_objects
             except ImportError:
                 from world_builder_api import generate_world_objects
         except Exception:
-            self._toast_msg("Portal Builder unavailable", 2.6)
+            self._toast_msg("World Builder unavailable", 2.6)
             return
 
         path = self._grid_room_path()
@@ -1087,20 +1087,20 @@ class DemoOverlay:
         self._toast_msg(f"Preview ready — {n} object{'s' if n != 1 else ''}. "
                         "Save to keep it.", 3.2)
 
-    def _derive_portal_name(self, prompt: str) -> str:
+    def _derive_world_name(self, prompt: str) -> str:
         """A friendly display name from the prompt (first few words, Title Cased)."""
         words = re.findall(r"[A-Za-z0-9]+", prompt or "")[:5]
         if not words:
             return "My World"
         return " ".join(w.capitalize() for w in words)[:40]
 
-    def _unique_portal_slug(self, name: str) -> str:
+    def _unique_world_slug(self, name: str) -> str:
         """A filesystem-safe, collision-free directory slug for a new world. Never
         a built-in or an existing world dir (numeric suffix added if needed)."""
-        base = re.sub(r"[^a-z0-9]+", "_", (name or "").lower()).strip("_") or "portal"
-        existing = set(self._all_portal_keys or []) | BUILTIN_PORTALS
+        base = re.sub(r"[^a-z0-9]+", "_", (name or "").lower()).strip("_") or "world"
+        existing = set(self._all_world_keys or []) | BUILTIN_WORLDS
         slug, i = base, 2
-        while slug in existing or (self._portals_dir() / slug).exists():
+        while slug in existing or (self._worlds_dir() / slug).exists():
             slug = f"{base}_{i}"
             i += 1
         return slug
@@ -1108,9 +1108,9 @@ class DemoOverlay:
     def _wb_save(self) -> None:
         """Save: commit the currently-previewed world to "my worlds".
 
-        Creates a NEW `Portals/<slug>/portal.json` — a copy of the grid_room scratch
+        Creates a NEW `Worlds/<slug>/world.json` — a copy of the grid_room scratch
         (objects already baked in by Send) with a unique name — then rescans so it
-        joins the Portals-tab cycle. grid_room itself stays the reusable blank scratch.
+        joins the Worlds-tab cycle. grid_room itself stays the reusable blank scratch.
         Requires a preview (Send first); every failure only toasts."""
         if not self._wb_preview_objects:
             self._toast_msg("Press Send to preview a world first", 2.8)
@@ -1126,16 +1126,16 @@ class DemoOverlay:
         world_def["name"] = name
         world_def.setdefault("assets", {})["placeable_objects"] = self._wb_preview_objects
         try:
-            wdir = self._portals_dir() / slug
+            wdir = self._worlds_dir() / slug
             wdir.mkdir(parents=True, exist_ok=True)
-            (wdir / "portal.json").write_text(json.dumps(world_def, indent=2))
+            (wdir / "world.json").write_text(json.dumps(world_def, indent=2))
         except Exception:
             self._toast_msg("Couldn't save the world", 2.6)
             return
 
-        # Rescan so the new world appears in the Portals-tab cycle (grid_room stays out).
-        self._all_portal_keys, self._portal_names = self._load_portals()
-        self._portal_keys = [k for k in self._all_portal_keys
+        # Rescan so the new world appears in the Worlds-tab cycle (grid_room stays out).
+        self._all_world_keys, self._world_names = self._load_worlds()
+        self._world_keys = [k for k in self._all_world_keys
                             if k != "grid_room"] or ["earth"]
         # Reset the scratch for the next build.
         self._wb_preview_objects = []
@@ -1147,20 +1147,20 @@ class DemoOverlay:
 
     # ── Settings → Delete World ─────────────────────────────────────────────────
 
-    def _deletable_portals(self) -> list[str]:
+    def _deletable_worlds(self) -> list[str]:
         """User-created worlds only — built-ins + the grid_room scratch are excluded
         so they can never be offered for deletion."""
-        return [k for k in self._portal_keys if k not in BUILTIN_PORTALS]
+        return [k for k in self._world_keys if k not in BUILTIN_WORLDS]
 
-    def _delete_portal(self, slug: str) -> None:
+    def _delete_world(self, slug: str) -> None:
         """Remove a user world after the Yes confirmation. Safety: refuse built-ins
-        and anything that doesn't resolve to a direct child of Portals/; rescan and
+        and anything that doesn't resolve to a direct child of Worlds/; rescan and
         fall back to a safe default if the active/prev world was the one removed."""
-        wdir = self._portals_dir()
+        wdir = self._worlds_dir()
         target = (wdir / slug).resolve()
-        if slug in BUILTIN_PORTALS or target.parent != wdir.resolve() or not target.is_dir():
+        if slug in BUILTIN_WORLDS or target.parent != wdir.resolve() or not target.is_dir():
             self._delete_target = None
-            self._toast_msg("That portal can't be deleted", 2.6)
+            self._toast_msg("That world can't be deleted", 2.6)
             self._compute_layout()
             return
         try:
@@ -1172,17 +1172,17 @@ class DemoOverlay:
             self._compute_layout()
             return
 
-        name = self._portal_names.get(slug, slug)
-        self._all_portal_keys, self._portal_names = self._load_portals()
-        self._portal_keys = [k for k in self._all_portal_keys
+        name = self._world_names.get(slug, slug)
+        self._all_world_keys, self._world_names = self._load_worlds()
+        self._world_keys = [k for k in self._all_world_keys
                             if k != "grid_room"] or ["earth"]
-        if self.active_portal == slug:
-            self.active_portal = "earth"
-            self._save_pref("portal", "earth")
-        if self._wb_prev_portal == slug:
-            self._wb_prev_portal = "earth"
+        if self.active_world == slug:
+            self.active_world = "earth"
+            self._save_pref("world", "earth")
+        if self._wb_prev_world == slug:
+            self._wb_prev_world = "earth"
         self._delete_target = None
-        if not self._deletable_portals():
+        if not self._deletable_worlds():
             self._delete_list_open = False
         self._compute_layout()
         self._toast_msg(f"Deleted “{name}”", 2.6)
@@ -1202,7 +1202,7 @@ class DemoOverlay:
         # scene, where dimming keeps the world the star). The Settings/Community
         # pages are solid full cards — fading them would reveal the dark scene
         # through the card, so they stay at full opacity.
-        on_worlds = self._active_tab == "portals"
+        on_worlds = self._active_tab == "worlds"
         idle = (0.0 if (self.hover is not None or not on_worlds)
                 else (self._now() - self._last_input))
         ca_target = 0.34 if idle > 4.0 else 1.0
@@ -1221,8 +1221,8 @@ class DemoOverlay:
     # ── Surface composition (pure pygame, physical px) ────────────────────────────
 
     def _scratch_mtime(self) -> float:
-        """mtime of the grid_room scratch portal.json, 0.0 on any error. Cheap stat,
-        matched to the pattern used by PortalRuntime.poll()."""
+        """mtime of the grid_room scratch world.json, 0.0 on any error. Cheap stat,
+        matched to the pattern used by WorldRuntime.poll()."""
         try:
             return self._grid_room_path().stat().st_mtime
         except Exception:
@@ -1233,9 +1233,9 @@ class DemoOverlay:
             round(self._ctrl_alpha, 2),
             self._primary(), self.live, self.daemon_running, self.desktop_paused,
             self.tracking_active, self.camera_denied,
-            self._active_tab, self._wb_view, self.active_portal, self.camera_enabled,
+            self._active_tab, self._wb_view, self.active_world, self.camera_enabled,
             self._wb_prompt, self._wb_focused, self._wb_preview_gen,
-            self._delete_list_open, self._delete_target, tuple(self._portal_keys),
+            self._delete_list_open, self._delete_target, tuple(self._world_keys),
             self._toast[0] if self._toast else None,
             self._press_key,
             tuple(round(self._hover_anim.get(k, 0.0), 2) for k in self._buttons),
@@ -1309,7 +1309,7 @@ class DemoOverlay:
         layer = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
 
         # ── Worlds tab — nav arrows, world-name pill, bottom action group ─────
-        if self._active_tab == "portals":
+        if self._active_tab == "worlds":
             # (No world-name title pill — the active world is announced only by
             # the quick toast above the bottom action group on switch.)
 
@@ -1354,10 +1354,10 @@ class DemoOverlay:
             # final Yes), then the user's own worlds list below it.
             if "delete_world" in self._buttons:
                 r = self._buttons["delete_world"]
-                self._draw_btn(layer, r, "Delete Portal", "secondary", "lg",
+                self._draw_btn(layer, r, "Delete World", "secondary", "lg",
                                dark=False, key="delete_world")
             if self._delete_list_open:
-                rows = self._deletable_portals()
+                rows = self._deletable_worlds()
                 if not rows:
                     _text_shadow(layer, "No custom worlds yet — build one in "
                                  "World Builder.", self.fnt_hint, INK_SOFT,
@@ -1370,7 +1370,7 @@ class DemoOverlay:
                         rr = self._buttons[bk]
                         _premium_card(layer, rr, S, radius=_BTN_CORNER, glow_alpha=0,
                                       shadow_alpha=18, shadow_blur=12, shadow_dy=5)
-                        nm = self.fnt_hint.render(self._portal_names.get(k, k), True, INK)
+                        nm = self.fnt_hint.render(self._world_names.get(k, k), True, INK)
                         layer.blit(nm, nm.get_rect(
                             midleft=(rr.left + int(18 * S), rr.centery)))
                         dl = self.fnt_small.render("Delete", True, (211, 47, 47))
@@ -1378,7 +1378,7 @@ class DemoOverlay:
                             midright=(rr.right - int(18 * S), rr.centery)))
 
         # ── World Builder tab — grid editor / live preview ────────────────────
-        elif self._active_tab == "portal_builder":
+        elif self._active_tab == "world_builder":
             if self._wb_view == "grid":
                 # Grid editor: warm off-white page with the cube floating at the
                 # centre between two elevated WHITE cards (soft neumorphism).
@@ -1432,9 +1432,9 @@ class DemoOverlay:
                 self._panel_header(layer, self._wb_left_panel,
                                    "How It Works", S, top_off=78)
                 self._panel_header(layer, self._wb_right_panel,
-                                   "Portal Builder", S, top_off=34)
+                                   "World Builder", S, top_off=34)
 
-                # Right panel — the "Describe your portal…" prompt input + the
+                # Right panel — the "Describe your world…" prompt input + the
                 # Send (preview) and Save (commit) buttons stacked beneath it.
                 self._draw_wb_prompt(layer, S)
                 self._draw_wb_actions(layer, S)
@@ -1480,13 +1480,13 @@ class DemoOverlay:
             ))
         _aa_round_rect(surf, self._tabbar, PANEL_SURFACE, tb_rad)
         tab_rad = int(_BTN_CORNER * S)
-        for key, text in (("tab:portals", "Portals"),
-                          ("tab:portal_builder", "Portal Builder"),
+        for key, text in (("tab:worlds", "Worlds"),
+                          ("tab:world_builder", "World Builder"),
                           ("tab:community", "Community"),
                           ("tab:settings", "Settings")):
             r = self._buttons[key]
             active = key == f"tab:{self._active_tab}"
-            builder = key == "tab:portal_builder"
+            builder = key == "tab:world_builder"
             # Drop shadow only on unoccupied, unpressed tabs — the occupied tab
             # reads as sunk-in so it gets no shadow for its entire tenure.
             if not active and self._press_key != key:
@@ -1530,7 +1530,7 @@ class DemoOverlay:
         # from the bottom as the tab bar is from the top). Solid accent-orange fill
         # with the same front-lit shadow as the top bar.
         if (hasattr(self, "_bottombar") and self._bottombar
-                and self._active_tab == "portal_builder"
+                and self._active_tab == "world_builder"
                 and self._wb_view == "grid"):
             _front_lit_shadow(surf, self._bottombar, tb_rad, (
                 (int(6 * S), 16),
@@ -1547,7 +1547,7 @@ class DemoOverlay:
             card = self._delete_card
             _premium_card(surf, card, S, radius=_PANEL_CORNER, glow_alpha=40,
                           shadow_alpha=48, shadow_blur=30, shadow_dy=18)
-            name = self._portal_names.get(self._delete_target, self._delete_target)
+            name = self._world_names.get(self._delete_target, self._delete_target)
             _text_shadow(surf, "Delete this world?", self.fnt_btn, INK,
                          (card.centerx, card.top + int(54 * S)), S)
             _text_shadow(surf, f"“{name}” will be permanently removed.",
@@ -1686,7 +1686,7 @@ class DemoOverlay:
         _aa_circle(layer, (ex, ey), int(3.4 * S), ACCENT_ORANGE)
 
     def _draw_wb_prompt(self, layer, S) -> None:
-        """Right card: the focusable "Describe your portal…" floating input card."""
+        """Right card: the focusable "Describe your world…" floating input card."""
         fld = self._wb_prompt_rect
         if not fld:
             return
@@ -1710,7 +1710,7 @@ class DemoOverlay:
         elif self._wb_focused:
             shown, color = "|", ACCENT_ORANGE
         else:
-            shown, color = "Describe your portal…", INK_SOFT
+            shown, color = "Describe your world…", INK_SOFT
         self._draw_wrapped(layer, shown, fld, color, self.fnt_hint, S)
 
     def _draw_wb_left(self, layer, S) -> None:
@@ -1720,7 +1720,7 @@ class DemoOverlay:
         if not lp:
             return
         body = (
-            "Portal Builder turns a sentence into objects inside your grid room.\n\n"
+            "World Builder turns a sentence into objects inside your grid room.\n\n"
             "Describe a scene with positions and colours, then press Send to "
             "preview it on the grid. Press Save to keep it as its own world.\n\n"
             "Try: “a glowing red sphere back-left, a tall pink cylinder near the "
@@ -1884,7 +1884,7 @@ class DemoOverlay:
         # with 0 = glass), while this oblique canvas addresses a CORNER-origin cube
         # (0..D on every axis, gz = 0 at the back wall). Convert, then paint back
         # (far) → front (near) so nearer objects overlap farther ones correctly.
-        # Fall back to the scratch portal.json when no in-app Send has been run yet
+        # Fall back to the scratch world.json when no in-app Send has been run yet
         # (e.g. objects placed via the CLI or /world-builder-live skill).
         objs = self._wb_preview_objects
         if not objs:

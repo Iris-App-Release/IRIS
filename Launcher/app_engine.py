@@ -423,23 +423,23 @@ def main() -> None:
     icons      = IconOrbit(debug=ICON_DEBUG)
     print("[main] Scene ready (Earth/Nebula/Stars load on demand).")
 
-    # ── Portal system (JSON-defined, live-switchable: Earth, The Watcher, …) ────
-    # The active portal is read from ~/.iris/preferences.json and re-polled each
+    # ── World system (JSON-defined, live-switchable: Earth, The Watcher, …) ────
+    # The active world is read from ~/.iris/preferences.json and re-polled each
     # frame, so switching takes effect live in the demo AND the wallpaper daemon.
-    # Camera/parallax are portal-agnostic; only the drawn assets change.
-    from Portals.portal_runtime import PortalRuntime, resolve_portals_dir
-    portal = PortalRuntime(resolve_portals_dir(_BUNDLE_BASE), PREFS_FILE)
+    # Camera/parallax are world-agnostic; only the drawn assets change.
+    from Worlds.world_runtime import WorldRuntime, resolve_worlds_dir
+    world = WorldRuntime(resolve_worlds_dir(_BUNDLE_BASE), PREFS_FILE)
     eye   = None   # The Watcher's eyeball — built lazily + guarded on first use,
                    # so an Earth-only session never touches the eye shader/texture.
     gem   = None   # The Gem — built lazily on first use, same guard pattern.
     room  = None   # The Grid Room — wireframe shadow-box, built lazily, same guard.
-    placeables = None  # Portal Builder placeable-object draw helper, built lazily.
+    placeables = None  # World Builder placeable-object draw helper, built lazily.
 
     # Live, mtime-cached metric calibration. Disabled by default, so half_h()→None
     # (camera_math uses the frozen WINDOW_HALF_H) and shift_scale→1.0: the camera
     # pipeline is byte-identical to before unless the user opts in.
     calib = calib_mod.CalibrationRuntime(CALIBRATION_FILE)
-    print(f"[main] Portal system ready — active '{portal.name}', available {portal.available()}")
+    print(f"[main] World system ready — active '{world.name}', available {world.available()}")
 
     # Bloom post-processing has been removed (user decision, 2026-06-01). The
     # scene now renders straight to the (multisampled) default framebuffer — no
@@ -759,7 +759,7 @@ def main() -> None:
         # bezel anchor, but the rotational look is held at ZERO. (Tried capping the pan;
         # any non-zero pan still shears the anchored rim — reverted 2026-06-02.) Object /
         # sphere worlds are untouched → byte-identical.
-        if portal.enveloping:
+        if world.enveloping:
             yaw_target = 0.0
             pitch_tgt  = 0.0
         pitch_tgt   =  max(-PITCH_PAN_MAX_RAD, min(PITCH_PAN_MAX_RAD, pitch_tgt))
@@ -774,7 +774,7 @@ def main() -> None:
         #   3. The overlay process is detected as running (cached pgrep, 5 s TTL).
         # Without these guards the engine wrote 30 Hz to disk continuously even when
         # the overlay was never installed — ~30 SSD writes/s for nothing (P1.3).
-        if portal.show_icons and not ICONS_OFF_FLAG.exists():
+        if world.show_icons and not ICONS_OFF_FLAG.exists():
             # Refresh the consumer-presence cache every 5 s
             if now - _icons_consumer_last_check >= _ICONS_CONSUMER_CHECK_INTERVAL:
                 _icons_consumer_present    = _check_icons_consumer()
@@ -805,14 +805,14 @@ def main() -> None:
 
         # Live world switch (cheap, mtime-cached; works in demo + daemon).
         # Capture return value so we can release assets when the world changes.
-        portal_changed = portal.poll()
+        world_changed = world.poll()
 
         # P1.1 — release unused GPU assets when the world switches.
         # If the new world neither needs the star background nor the Earth mesh,
         # destroy those objects so VRAM and RSS are freed promptly.  The lazy
         # guards below rebuild them if the user switches back.
-        if portal_changed:
-            _bg_needed = (portal.background == "stars")
+        if world_changed:
+            _bg_needed = (world.background == "stars")
             if not _bg_needed:
                 if nebula is not None:
                     try:   nebula.destroy()
@@ -822,12 +822,12 @@ def main() -> None:
                     try:   stars.destroy()
                     except Exception: pass
                     stars = None
-            _earth_mesh_needed = portal.primary_mesh not in ("room", "eye", "gem")
+            _earth_mesh_needed = world.primary_mesh not in ("room", "eye", "gem")
             if not _earth_mesh_needed:
                 _can_release = (
-                    (portal.primary_mesh == "room"  and room is not None)  or
-                    (portal.primary_mesh == "gem"   and gem  is not None)  or
-                    (portal.primary_mesh == "eye"   and eye  is not None)
+                    (world.primary_mesh == "room"  and room is not None)  or
+                    (world.primary_mesh == "gem"   and gem  is not None)  or
+                    (world.primary_mesh == "eye"   and eye  is not None)
                 )
                 if _can_release and earth is not None:
                     try:   earth.destroy()
@@ -858,7 +858,7 @@ def main() -> None:
 
         # Per-world clear colour: Earth keeps its near-black blue; The Watcher is
         # a pure black void. (Identical value for Earth → no behavioural change.)
-        cc = portal.clear_color
+        cc = world.clear_color
         glClearColor(cc[0], cc[1], cc[2], 1.0)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
@@ -913,7 +913,7 @@ def main() -> None:
                 return False
 
         # 1. Background — Earth's Milky Way + parallax stars, or an empty void.
-        if portal.background == "stars":
+        if world.background == "stars":
             # Lazy-build Nebula and Stars on the first frame that needs them.
             if nebula is None:
                 try:
@@ -943,7 +943,7 @@ def main() -> None:
         #    at z = 0 — so it is handled before the Earth-anchor translate.
         hw, hh = om.window_half_extents(aspect, win_half_h)   # live aperture extents
 
-        if portal.primary_mesh == "room":
+        if world.primary_mesh == "room":
             # Wireframe shadow-box room — built lazily like Eye/Gem; on failure
             # fall back to Earth rather than crash the engine.
             if room is None:
@@ -951,14 +951,14 @@ def main() -> None:
                     room = GridRoom()
                 except Exception as e:
                     print(f"[main] Grid Room unavailable ({e}); falling back to Earth")
-                    portal.select("earth")
+                    world.select("earth")
             if room is not None:
-                room.draw(hw, hh, portal.grid_depth, portal.grid_divisions,
-                          portal.grid_color, t_s, dpi_scale)
+                room.draw(hw, hh, world.grid_depth, world.grid_divisions,
+                          world.grid_color, t_s, dpi_scale)
                 # World Builder: user-placed builtin primitives, drawn in world
                 # space right after the grid (same frame of reference). Built
                 # lazily + guarded; a failure here must never kill the wallpaper.
-                objs = portal.placeable_objects
+                objs = world.placeable_objects
                 if objs:
                     if placeables is None:
                         try:
@@ -968,7 +968,7 @@ def main() -> None:
                     if placeables is not None:
                         try:
                             placeables.draw(objs, hw, hh,
-                                            portal.grid_depth, portal.grid_divisions)
+                                            world.grid_depth, world.grid_divisions)
                         except Exception as e:
                             print(f"[main] placeable draw failed ({e}); skipping")
             else:
@@ -986,19 +986,19 @@ def main() -> None:
             # Room's dimensions (aperture extents + grid_depth/grid_divisions). The
             # box is an ENVIRONMENT drawn in WORLD space (front rim on the glass at
             # z = 0), so it is built + drawn here, BEFORE the Earth-anchor translate.
-            if portal.primary_mesh == "gem":
+            if world.primary_mesh == "gem":
                 if gem is None:
                     try:
                         gem = Gem()
                     except Exception as e:
                         print(f"[main] The Gem unavailable ({e}); falling back to Earth")
-                        portal.select("earth")
+                        world.select("earth")
                 if gem is not None:
-                    gem.draw_box(hw, hh, portal.grid_depth, portal.grid_divisions)
+                    gem.draw_box(hw, hh, world.grid_depth, world.grid_divisions)
 
             glPushMatrix()
             glTranslatef(wx, wy, bz)
-            if portal.primary_mesh == "eye":
+            if world.primary_mesh == "eye":
                 # Build the eyeball lazily on first use; if its shader/textures fail
                 # to load, log and fall back to Earth rather than crash the engine.
                 if eye is None:
@@ -1006,14 +1006,14 @@ def main() -> None:
                         eye = Eye()
                     except Exception as e:
                         print(f"[main] The Watcher unavailable ({e}); falling back to Earth")
-                        portal.select("earth")
+                        world.select("earth")
                 if eye is not None:
                     eye.draw(sun_eye, t_s)
                 else:
                     if _ensure_earth():
                         earth.poll_upload()
                         earth.draw(sun_eye, t_s)
-            elif portal.primary_mesh == "gem":
+            elif world.primary_mesh == "gem":
                 # The Gem — brilliant-cut rotating gemstone, floating inside the
                 # checkered box drawn above. Built lazily there; if that failed the
                 # world has already been switched to Earth, so gem is non-None here.
@@ -1032,15 +1032,15 @@ def main() -> None:
                     # same transform so they inherit Earth's parallax, camera,
                     # projection and depth as one rigid body (real z-buffer occlusion,
                     # real perspective). Worlds may opt out (The Watcher has no icons).
-                    if portal.show_icons and not ICONS_OFF_FLAG.exists():
+                    if world.show_icons and not ICONS_OFF_FLAG.exists():
                         icons.draw(dpi_scale)
             glPopMatrix()
 
         # Opt-in window-frame anchor on the glass (world z = 0). Default OFF, so
         # the shipped Earth / Watcher / Gem worlds are unchanged; the Grid Room
         # draws its own rim, so it is excluded here.
-        if portal.show_window_frame and portal.primary_mesh != "room":
-            draw_window_frame(hw, hh, color=portal.grid_color, dpi_scale=dpi_scale)
+        if world.show_window_frame and world.primary_mesh != "room":
+            draw_window_frame(hw, hh, color=world.grid_color, dpi_scale=dpi_scale)
 
         # (Bloom Pass 2 removed — the scene is already on screen.)
 

@@ -15,9 +15,9 @@ the authoring flow can't silently regress:
      Preview sub-view only. Restart button is the explicit clear.
   2. SEND = PREVIEW — Send runs the (stubbed) generator, holds the sanitized
      objects in a transient field, mirrors them into the grid_room scratch
-     portal.json (so hot-reload/Preview show them), and does NOT create a world.
+     world.json (so hot-reload/Preview show them), and does NOT create a world.
   3. SAVE = NEW WORLD — Save bakes the previewed objects into a brand-new
-     Portals/<slug>/portal.json with a unique name, joins it to the Portals-tab
+     Worlds/<slug>/world.json with a unique name, joins it to the Worlds-tab
      cycle, and resets the scratch. Save with no preview is a no-op.
   4. DELETE WORLD — the Settings list offers only user worlds (built-ins +
      grid_room never appear); confirm-Yes removes the dir, drops it from the
@@ -76,7 +76,7 @@ _STUB_OBJECTS = [
 ]
 
 
-def _make_portal(dirp: Path, name: str, src_grid: Path | None = None) -> None:
+def _make_world(dirp: Path, name: str, src_grid: Path | None = None) -> None:
     dirp.mkdir(parents=True, exist_ok=True)
     if src_grid is not None and src_grid.exists():
         data = json.loads(src_grid.read_text())
@@ -84,7 +84,7 @@ def _make_portal(dirp: Path, name: str, src_grid: Path | None = None) -> None:
     else:
         data = {"name": name, "rendering": {"grid_divisions": 8, "grid_depth": 18.0,
                 "enveloping": True}, "assets": {"placeable_objects": []}}
-    (dirp / "portal.json").write_text(json.dumps(data, indent=2))
+    (dirp / "world.json").write_text(json.dumps(data, indent=2))
 
 
 def main() -> int:
@@ -96,10 +96,10 @@ def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="iris_wb_sim_"))
     tmp_worlds = tmp / "Worlds"
     # Built-ins + the grid_room scratch (copied from the real one for fidelity).
-    _make_portal(tmp_worlds / "grid_room", "Grid Room",
-                src_grid=repo_worlds / "grid_room" / "portal.json")
+    _make_world(tmp_worlds / "grid_room", "Grid Room",
+                src_grid=repo_worlds / "grid_room" / "world.json")
     for b in ("earth", "gem", "the_watcher"):
-        _make_portal(tmp_worlds / b, b.replace("_", " ").title())
+        _make_world(tmp_worlds / b, b.replace("_", " ").title())
 
     import UI.demo_overlay as ov_mod
     ov_mod.CONFIG_DIR = tmp
@@ -113,15 +113,15 @@ def main() -> int:
     wba.generate_world_objects = lambda prompt, world_def: list(_STUB_OBJECTS)
 
     from UI.demo_overlay import DemoOverlay
-    from Portals.portal_loader import PortalLoader
+    from Worlds.world_loader import WorldLoader
 
     def temp_load_worlds():
-        loader = PortalLoader(tmp_worlds)
-        keys = loader.list_available_portals() or ["earth"]
+        loader = WorldLoader(tmp_worlds)
+        keys = loader.list_available_worlds() or ["earth"]
         names = {}
         for k in keys:
             try:
-                names[k] = loader.load_portal(k).get("name", k)
+                names[k] = loader.load_world(k).get("name", k)
             except Exception:
                 names[k] = k
         return keys, names
@@ -130,14 +130,14 @@ def main() -> int:
     o = DemoOverlay(W, H, scale=S, daemon_running=False, desktop_paused=False)
     # Redirect every Worlds/ path at the instance to the temp tree.
     o._worlds_dir = lambda: tmp_worlds
-    o._grid_room_path = lambda: tmp_worlds / "grid_room" / "portal.json"
+    o._grid_room_path = lambda: tmp_worlds / "grid_room" / "world.json"
     o._load_worlds = temp_load_worlds
     o._all_world_keys, o._world_names = temp_load_worlds()
     o._world_keys = [k for k in o._all_world_keys if k != "grid_room"] or ["earth"]
     o.active_world = "earth"
 
     def scratch_objects():
-        return json.loads((tmp_worlds / "grid_room" / "portal.json").read_text()) \
+        return json.loads((tmp_worlds / "grid_room" / "world.json").read_text()) \
             .get("assets", {}).get("placeable_objects", [])
 
     # ── 1. Enter World Builder → preserve state + preview-suspend wiring ──────────
@@ -183,12 +183,12 @@ def main() -> int:
           f"new: {new_dirs}")
     slug = new_dirs[0] if new_dirs else ""
     if slug:
-        saved = json.loads((tmp_worlds / slug / "portal.json").read_text())
+        saved = json.loads((tmp_worlds / slug / "world.json").read_text())
         check("saved world bakes in the previewed objects",
               len(saved.get("assets", {}).get("placeable_objects", [])) == 2)
         check("saved world has a derived display name",
               bool(saved.get("name")) and saved["name"] != "Grid Room", saved.get("name"))
-        check("saved world joins the Portals-tab cycle", slug in o._world_keys)
+        check("saved world joins the Worlds-tab cycle", slug in o._world_keys)
     check("Save resets the transient preview", o._wb_preview_objects == [])
     check("Save resets the grid_room scratch", scratch_objects() == [])
     check("Save clears the prompt", o._wb_prompt == "")
@@ -225,7 +225,7 @@ def main() -> int:
     check("confirm modal renders", _has_content(o.render_surface()))
     o._click("del_confirm_yes")
     check("Yes removes the world directory", not (tmp_worlds / slug).exists())
-    check("Yes drops it from the Portals-tab cycle", slug not in o._world_keys)
+    check("Yes drops it from the Worlds-tab cycle", slug not in o._world_keys)
     check("deleting the active world falls back to a safe default",
           o.active_world == "earth", o.active_world)
     check("confirm modal dismissed after delete", o._delete_target is None)

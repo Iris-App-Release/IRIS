@@ -44,13 +44,13 @@ R_ATMOSPHERE      = 2.85                # renderer.Earth.R_ATMOSPHERE (glow, no 
 # depth buffer occludes it. See sim_orbit.py for the assertions that pin these.
 ORBIT_RADIUS      = 4.2      # distance of each icon from Earth center
 ORBIT_TILT_DEG    = 63.0     # tilt of the orbital plane about the X axis
-ICON_PORTAL_SIZE   = 0.85     # billboard quad edge length in world units
+ICON_WORLD_SIZE   = 0.85     # billboard quad edge length in world units
 ORBIT_SPEED       = 0.22     # radians / second around the ring
 BOB_AMP           = 0.10     # radial wobble amplitude (world units)
 BOB_SPEED         = 0.6      # radial wobble speed (rad/s)
 
 
-def earth_portal_center(cam_x: float, cam_y: float) -> np.ndarray:
+def earth_world_center(cam_x: float, cam_y: float) -> np.ndarray:
     """Earth's world-space center for the current camera offset (parallax)."""
     bx, by, bz = EARTH_BASE
     return np.array([bx + cam_x * EARTH_PARALLAX,

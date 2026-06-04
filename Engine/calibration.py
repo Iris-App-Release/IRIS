@@ -151,7 +151,7 @@ def load(path: Path | str) -> Calibration:
 
 class CalibrationRuntime:
     """Live, mtime-cached calibration — re-read only when the file changes on
-    disk, mirroring PortalRuntime / the ~/.parallax_* flag polling. So a Settings
+    disk, mirroring WorldRuntime / the ~/.parallax_* flag polling. So a Settings
     UI (or a hand edit) takes effect live in both the demo and the daemon.
 
     When disabled (default), half_h() → None and shift_scale → 1.0, so the engine
