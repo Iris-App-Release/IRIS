@@ -421,7 +421,7 @@ class DemoOverlay:
         self._wb_prompt_rect = None
         # Transient preview: Send runs Claude and stores the sanitized objects here
         # (NOT saved). They're drawn on the Canvas Cube and mirrored to the grid_room
-        # scratch world.json so the live Preview shows them too. `_wb_preview_gen`
+        # scratch portal.json so the live Preview shows them too. `_wb_preview_gen`
         # bumps on every Send/Save/clear so the signature-cached surface invalidates.
         self._wb_preview_objects: list[dict] = []
         self._wb_preview_gen = 0
@@ -432,7 +432,7 @@ class DemoOverlay:
         self._delete_target: str | None = None
         self._delete_card = None
         # grid_room is the World Builder's working world — keep it loadable but
-        # OUT of the Worlds-tab cycle (it's a blank canvas preview, not a world).
+        # OUT of the Portals-tab cycle (it's a blank canvas preview, not a world).
         self._all_portal_keys, self._portal_names = self._load_portals()
         self._portal_keys = [k for k in self._all_portal_keys
                             if k != "grid_room"] or ["earth"]
@@ -911,7 +911,7 @@ class DemoOverlay:
             if tab != self._active_tab:
                 # World Builder edits ONE world (grid_room). Entering the tab
                 # makes it the working world (remembering the prior selection);
-                # leaving restores it, so the Worlds-tab choice is untouched.
+                # leaving restores it, so the Portals-tab choice is untouched.
                 if tab == "portal_builder":
                     self._wb_prev_portal = self.active_portal
                     self._wb_view = "grid"
@@ -1017,11 +1017,11 @@ class DemoOverlay:
         return wdir if wdir.exists() else base / "portals"
 
     def _grid_room_path(self) -> Path:
-        return self._portals_dir() / "grid_room" / "world.json"
+        return self._portals_dir() / "grid_room" / "portal.json"
 
     def _write_scratch(self, objects: list[dict]) -> None:
-        """Mirror the previewed objects into the grid_room scratch world.json so the
-        engine's mtime hot-reload (`world_runtime.poll`) shows them in live Preview.
+        """Mirror the previewed objects into the grid_room scratch portal.json so the
+        engine's mtime hot-reload (`portal_runtime.poll`) shows them in live Preview.
         Best-effort: a write failure only means Preview lags, never a HUD crash."""
         try:
             path = self._grid_room_path()
@@ -1097,7 +1097,7 @@ class DemoOverlay:
     def _unique_portal_slug(self, name: str) -> str:
         """A filesystem-safe, collision-free directory slug for a new world. Never
         a built-in or an existing world dir (numeric suffix added if needed)."""
-        base = re.sub(r"[^a-z0-9]+", "_", (name or "").lower()).strip("_") or "world"
+        base = re.sub(r"[^a-z0-9]+", "_", (name or "").lower()).strip("_") or "portal"
         existing = set(self._all_portal_keys or []) | BUILTIN_PORTALS
         slug, i = base, 2
         while slug in existing or (self._portals_dir() / slug).exists():
@@ -1108,9 +1108,9 @@ class DemoOverlay:
     def _wb_save(self) -> None:
         """Save: commit the currently-previewed world to "my worlds".
 
-        Creates a NEW `Worlds/<slug>/world.json` — a copy of the grid_room scratch
+        Creates a NEW `Portals/<slug>/portal.json` — a copy of the grid_room scratch
         (objects already baked in by Send) with a unique name — then rescans so it
-        joins the Worlds-tab cycle. grid_room itself stays the reusable blank scratch.
+        joins the Portals-tab cycle. grid_room itself stays the reusable blank scratch.
         Requires a preview (Send first); every failure only toasts."""
         if not self._wb_preview_objects:
             self._toast_msg("Press Send to preview a world first", 2.8)
@@ -1128,12 +1128,12 @@ class DemoOverlay:
         try:
             wdir = self._portals_dir() / slug
             wdir.mkdir(parents=True, exist_ok=True)
-            (wdir / "world.json").write_text(json.dumps(world_def, indent=2))
+            (wdir / "portal.json").write_text(json.dumps(world_def, indent=2))
         except Exception:
             self._toast_msg("Couldn't save the world", 2.6)
             return
 
-        # Rescan so the new world appears in the Worlds-tab cycle (grid_room stays out).
+        # Rescan so the new world appears in the Portals-tab cycle (grid_room stays out).
         self._all_portal_keys, self._portal_names = self._load_portals()
         self._portal_keys = [k for k in self._all_portal_keys
                             if k != "grid_room"] or ["earth"]
@@ -1221,7 +1221,7 @@ class DemoOverlay:
     # ── Surface composition (pure pygame, physical px) ────────────────────────────
 
     def _scratch_mtime(self) -> float:
-        """mtime of the grid_room scratch world.json, 0.0 on any error. Cheap stat,
+        """mtime of the grid_room scratch portal.json, 0.0 on any error. Cheap stat,
         matched to the pattern used by WorldRuntime.poll()."""
         try:
             return self._grid_room_path().stat().st_mtime
@@ -1884,7 +1884,7 @@ class DemoOverlay:
         # with 0 = glass), while this oblique canvas addresses a CORNER-origin cube
         # (0..D on every axis, gz = 0 at the back wall). Convert, then paint back
         # (far) → front (near) so nearer objects overlap farther ones correctly.
-        # Fall back to the scratch world.json when no in-app Send has been run yet
+        # Fall back to the scratch portal.json when no in-app Send has been run yet
         # (e.g. objects placed via the CLI or /world-builder-live skill).
         objs = self._wb_preview_objects
         if not objs:

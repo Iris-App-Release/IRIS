@@ -18,8 +18,8 @@ Subcommands:
   preview "<prompt>"           Generate (real Claude call) → write the grid_room
                                scratch + switch the active world to grid_room, so a
                                RUNNING app hot-reloads it into a live preview. (= Send)
-  save "<prompt>" [--name N]   Generate → commit a NEW Worlds/<slug>/world.json that
-                               joins the Worlds-tab cycle. (= Send then Save)
+  save "<prompt>" [--name N]   Generate → commit a NEW Portals/<slug>/portal.json that
+                               joins the Portals-tab cycle. (= Send then Save)
   list                         Show built-in vs user worlds + the active world.
   use <slug>                   Set the active world (~/.iris/preferences.json).
   delete <slug>                Delete a USER world dir (built-ins/path-escapes refused).
@@ -69,7 +69,7 @@ def portals_dir(root: Path = ROOT) -> Path:
 
 
 def grid_room_path(root: Path = ROOT) -> Path:
-    return portals_dir(root) / "grid_room" / "world.json"
+    return portals_dir(root) / "grid_room" / "portal.json"
 
 
 def list_portal_keys(root: Path = ROOT) -> list[str]:
@@ -77,12 +77,12 @@ def list_portal_keys(root: Path = ROOT) -> list[str]:
     if not wd.exists():
         return []
     return sorted(p.name for p in wd.iterdir()
-                  if p.is_dir() and (p / "world.json").exists())
+                  if p.is_dir() and (p / "portal.json").exists())
 
 
 def portal_display_name(slug: str, root: Path = ROOT) -> str:
     try:
-        d = json.loads((portals_dir(root) / slug / "world.json").read_text())
+        d = json.loads((portals_dir(root) / slug / "portal.json").read_text())
         return d.get("name", slug)
     except Exception:
         return slug
@@ -186,7 +186,7 @@ def cmd_preview(args) -> int:
     try:
         gr = _read_grid_room()
     except Exception as e:
-        print(f"error: couldn't read grid_room world.json: {e}", file=sys.stderr)
+        print(f"error: couldn't read grid_room portal.json: {e}", file=sys.stderr)
         return 1
     divisions = int(gr.get("rendering", {}).get("grid_divisions", 8) or 8)
 
@@ -216,12 +216,12 @@ def cmd_preview(args) -> int:
 
 
 def cmd_save(args) -> int:
-    """= Send then Save: generate → commit a NEW Worlds/<slug>/world.json."""
+    """= Send then Save: generate → commit a NEW Portals/<slug>/portal.json."""
     prompt = (args.prompt or "").strip()
     try:
         gr = _read_grid_room()
     except Exception as e:
-        print(f"error: couldn't read grid_room world.json: {e}", file=sys.stderr)
+        print(f"error: couldn't read grid_room portal.json: {e}", file=sys.stderr)
         return 1
     divisions = int(gr.get("rendering", {}).get("grid_divisions", 8) or 8)
 
@@ -246,7 +246,7 @@ def cmd_save(args) -> int:
     gr.setdefault("assets", {})["placeable_objects"] = objects
     wdir = portals_dir() / slug
     wdir.mkdir(parents=True, exist_ok=True)
-    (wdir / "world.json").write_text(json.dumps(gr, indent=2))
+    (wdir / "portal.json").write_text(json.dumps(gr, indent=2))
     # Reset the scratch (the app does this after Save).
     blank = _read_grid_room()
     blank.setdefault("assets", {})["placeable_objects"] = []
@@ -337,11 +337,11 @@ def cmd_selftest(_args) -> int:
         gr_dir.mkdir(parents=True)
         base = {"name": "Grid Room", "rendering": {"grid_divisions": 8, "grid_depth": 18.0},
                 "assets": {"placeable_objects": []}}
-        (gr_dir / "world.json").write_text(json.dumps(base))
+        (gr_dir / "portal.json").write_text(json.dumps(base))
         # seed a couple of built-ins so list/slug logic has company
         for b in ("earth", "the_watcher"):
             (root / "Worlds" / b).mkdir(parents=True)
-            (root / "Worlds" / b / "world.json").write_text('{"name":"%s"}' % b)
+            (root / "Worlds" / b / "portal.json").write_text('{"name":"%s"}' % b)
 
         divisions = 8
         objs = sanitize_objects(canned, divisions)
@@ -350,10 +350,10 @@ def cmd_selftest(_args) -> int:
               objs[0]["grid_position"] == (4.0, -4.0, 8.0))
 
         # preview = scratch write
-        gr = json.loads((gr_dir / "world.json").read_text())
+        gr = json.loads((gr_dir / "portal.json").read_text())
         gr.setdefault("assets", {})["placeable_objects"] = objs
-        (gr_dir / "world.json").write_text(json.dumps(gr))
-        reloaded = json.loads((gr_dir / "world.json").read_text())
+        (gr_dir / "portal.json").write_text(json.dumps(gr))
+        reloaded = json.loads((gr_dir / "portal.json").read_text())
         check("preview writes objects into grid_room scratch",
               len(reloaded["assets"]["placeable_objects"]) == 2)
 
@@ -366,12 +366,12 @@ def cmd_selftest(_args) -> int:
         nd.mkdir(parents=True)
         saved = dict(base); saved["name"] = name
         saved.setdefault("assets", {})["placeable_objects"] = objs
-        (nd / "world.json").write_text(json.dumps(saved))
-        check("save created the new world dir", (nd / "world.json").exists())
+        (nd / "portal.json").write_text(json.dumps(saved))
+        check("save created the new world dir", (nd / "portal.json").exists())
         check("saved world baked in the objects",
-              len(json.loads((nd / 'world.json').read_text())['assets']['placeable_objects']) == 2)
+              len(json.loads((nd / 'portal.json').read_text())['assets']['placeable_objects']) == 2)
         check("save baked NO change into a frozen field (grid_divisions intact)",
-              json.loads((nd / 'world.json').read_text())['rendering']['grid_divisions'] == 8)
+              json.loads((nd / 'portal.json').read_text())['rendering']['grid_divisions'] == 8)
 
         # delete safety
         wd_resolved = (root / "Worlds").resolve()
