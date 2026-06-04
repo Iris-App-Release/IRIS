@@ -62,9 +62,9 @@ DAEMON_PID_FILE   = CONFIG_DIR / "daemon.pid"          # written when we spawn i
 TRACKING_OFF_FLAG = Path.home() / ".parallax_off"      # master switch the daemon polls
 CAMERA_OFF_FLAG   = CONFIG_DIR / "camera_off"          # Settings camera-access switch
 
-# Worlds that ship with the app + the World Builder scratch canvas. These are
+# Portals that ship with the app + the Portal Builder scratch canvas. These are
 # never offered in the Settings "Delete Portal" list and can never be removed — the
-# delete flow only ever touches USER-created worlds inside Worlds/ (see _delete_portal).
+# delete flow only ever touches USER-created portals inside Portals/ (see _delete_portal).
 BUILTIN_PORTALS = {"earth", "gem", "the_watcher", "grid_room"}
 
 # Load localized strings from Config/Strings.json
@@ -509,14 +509,14 @@ class DemoOverlay:
 
     def _load_portals(self):
         """Return (keys, names): available world dir names + their display names,
-        via the same WorldLoader the engine uses. Falls back to Earth-only."""
+        via the same PortalLoader the engine uses. Falls back to Earth-only."""
         try:
             from Portals.portal_loader import PortalLoader
             base = Path(__file__).resolve().parent.parent
             wdir = base / "Portals"
             if not wdir.exists():
                 wdir = base / "portals"
-            loader = WorldLoader(wdir)
+            loader = PortalLoader(wdir)
             keys = loader.list_available_worlds() or ["earth"]
             names = {}
             for k in keys:
@@ -586,7 +586,7 @@ class DemoOverlay:
     @property
     def preview_active(self) -> bool:
         """Engine reads this each frame: render the live 3-D world preview while
-        the Worlds tab is showing, AND while World Builder is in its Preview view
+        the Portals tab is showing, AND while Portal Builder is in its Preview view
         (the real off-axis conversion of the grid world the user is building). On
         Settings/Community and the World Builder grid editor the engine skips the
         (expensive) scene draw — those show a solid card instead."""
@@ -1010,7 +1010,7 @@ class DemoOverlay:
     # ── Worlds-dir helpers (shared by Send / Save / Delete) ─────────────────────
 
     def _portals_dir(self) -> Path:
-        """The Worlds/ directory (handles the lowercase fallback), matching the
+        """The Portals/ directory (handles the lowercase fallback), matching the
         same base resolution `_load_portals` uses so rescans stay consistent."""
         base = Path(__file__).resolve().parent.parent
         wdir = base / "Portals"
@@ -1047,7 +1047,7 @@ class DemoOverlay:
 
         The sanitized objects are held in `_wb_preview_objects` (drawn on the Canvas
         Cube) and mirrored to the grid_room scratch world so the live Preview shows
-        them too. Nothing is committed to the user's Worlds until Save. Every failure
+        them too. Nothing is committed to the user's Portals until Save. Every failure
         only toasts; it never crashes the HUD."""
         prompt = (self._wb_prompt or "").strip()
         if not prompt:
@@ -1154,7 +1154,7 @@ class DemoOverlay:
 
     def _delete_portal(self, slug: str) -> None:
         """Remove a user world after the Yes confirmation. Safety: refuse built-ins
-        and anything that doesn't resolve to a direct child of Worlds/; rescan and
+        and anything that doesn't resolve to a direct child of Portals/; rescan and
         fall back to a safe default if the active/prev world was the one removed."""
         wdir = self._portals_dir()
         target = (wdir / slug).resolve()
@@ -1222,7 +1222,7 @@ class DemoOverlay:
 
     def _scratch_mtime(self) -> float:
         """mtime of the grid_room scratch portal.json, 0.0 on any error. Cheap stat,
-        matched to the pattern used by WorldRuntime.poll()."""
+        matched to the pattern used by PortalRuntime.poll()."""
         try:
             return self._grid_room_path().stat().st_mtime
         except Exception:
