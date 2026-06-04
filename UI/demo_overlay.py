@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -60,6 +61,11 @@ PREFS_FILE        = CONFIG_DIR / "preferences.json"
 DAEMON_PID_FILE   = CONFIG_DIR / "daemon.pid"          # written when we spawn it
 TRACKING_OFF_FLAG = Path.home() / ".parallax_off"      # master switch the daemon polls
 CAMERA_OFF_FLAG   = CONFIG_DIR / "camera_off"          # Settings camera-access switch
+
+# Worlds that ship with the app + the World Builder scratch canvas. These are
+# never offered in the Settings "Delete Portal" list and can never be removed — the
+# delete flow only ever touches USER-created worlds inside Worlds/ (see _delete_portal).
+BUILTIN_PORTALS = {"earth", "gem", "the_watcher", "grid_room"}
 
 # Load localized strings from Config/Strings.json
 _STRINGS_PATH = Path(__file__).parent.parent / "Config" / "Strings.json"
@@ -117,6 +123,24 @@ ARROW_GLYPH      = (240, 240, 245)      # nav-arrow triangle, drawn over the pil
 PREMIUM_GOLD        = (236, 163, 30)    # supplied golden yellow (#ECA31E) — panel fill
 PREMIUM_GOLD_BORDER = (170, 117, 22)    # a few shades darker — panel border
 PREMIUM_NAVY        = (23, 32, 58)      # deep navy — bold panel titles
+
+# ── Premium warm-light theme (the World Builder visual upgrade) ───────────────
+# Soft neumorphism: white cards floating on a warm off-white page, elevated by
+# warm shadows + a faint gold outer glow, accented by a single highlight orange.
+# These REPLACE the flat saturated-gold panels with elevated white surfaces.
+PAGE_BG          = (245, 242, 238)   # warm off-white page background
+PANEL_SURFACE    = (252, 250, 247)   # white card surface (panels, nav, capsules)
+PANEL_SURFACE_2  = (248, 246, 242)   # secondary surface (inset input / cube faces)
+GOLD_RIM         = (236, 200, 130)   # thin warm gold rim around the white cards
+GOLD_RIM_SOFT    = (244, 224, 178)   # lighter rim, lower-contrast edges
+ACCENT_ORANGE    = (236, 168, 28)    # highlight orange — active tab, CTA, icons
+ACCENT_ORANGE_HI = (247, 192, 70)    # lighter orange — top of CTA gradient / glints
+GLOW_YELLOW      = (255, 215, 80)    # warm glow colour (applied at low alpha)
+INK              = (74, 66, 54)      # warm near-black — titles
+INK_SOFT         = (138, 128, 114)   # muted warm gray — body / placeholder
+GRID_LINE        = (216, 210, 201)   # very subtle cube grid lines (elegant, not technical)
+CUBE_EDGE        = (196, 188, 176)   # soft warm cube outline (no hard black)
+CUBE_EDGE_KEY    = (168, 158, 144)   # slightly stronger key edges (back-wall frame)
 
 T_TITLE        = (255, 255, 255)
 T_BODY         = (255, 255, 255)
@@ -214,6 +238,145 @@ def _filled_rounded_poly(surf, pts, color, r) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  Soft-shadow / glow primitives (pure pygame, sprite-cached).
+#
+#  Premium neumorphism wants blurred drop shadows and a faint gold rim-glow under
+#  every white card. Classic pygame has no gaussian_blur, so we fake a soft blur
+#  by smooth-downscaling a rounded-rect sprite and scaling it back up (cheap, and
+#  banding-free after two passes). Each sprite is keyed by its geometry and built
+#  ONCE — the composed HUD surface is itself signature-cached, so on a dirty
+#  re-render (hover, typing) these are pure blits, never rebuilt. No filter:blur,
+#  no per-frame work: the cost is one-time, the runtime cost is a textured quad.
+# ══════════════════════════════════════════════════════════════════════════════
+
+_SPRITE_CACHE: dict = {}
+
+
+def _blur_down_up(surf: pygame.Surface, factor: int) -> pygame.Surface:
+    """Soft blur by smooth down-then-up scaling (two passes kill banding)."""
+    w, h = surf.get_size()
+    f = max(2, int(factor))
+    sm = pygame.transform.smoothscale(surf, (max(1, w // f), max(1, h // f)))
+    out = pygame.transform.smoothscale(sm, (w, h))
+    sm2 = pygame.transform.smoothscale(out, (max(1, w // 2), max(1, h // 2)))
+    return pygame.transform.smoothscale(sm2, (w, h))
+
+
+def _blur_sprite(key, w, h, radius, color, alpha, blur):
+    """Cached blurred, filled rounded-rect sprite. Returns (surface, pad)."""
+    hit = _SPRITE_CACHE.get(key)
+    if hit is not None:
+        return hit
+    if len(_SPRITE_CACHE) > 96:                 # bound growth across resizes
+        _SPRITE_CACHE.clear()
+    w, h = max(1, int(w)), max(1, int(h))
+    pad = int(blur) + 2
+    W, H = w + pad * 2, h + pad * 2
+    base = pygame.Surface((W, H), pygame.SRCALPHA)
+    pygame.draw.rect(base, (*color, int(alpha)), pygame.Rect(pad, pad, w, h),
+                     border_radius=max(0, int(radius)))
+    sprite = (_blur_down_up(base, blur), pad)
+    _SPRITE_CACHE[key] = sprite
+    return sprite
+
+
+def _soft_shadow(surf, rect, radius, *, blur, dy, alpha, color=(0, 0, 0)) -> None:
+    """Blurred drop shadow beneath ``rect`` (warm depth, prefers blit over blur)."""
+    sprite, pad = _blur_sprite(("sh", int(rect.w), int(rect.h), int(radius),
+                                int(blur), int(alpha), color),
+                               rect.w, rect.h, radius, color, alpha, blur)
+    surf.blit(sprite, (int(rect.x) - pad, int(rect.y) - pad + int(dy)))
+
+
+def _outer_glow(surf, rect, radius, *, color, blur, spread, alpha) -> None:
+    """Soft coloured glow radiating outward from ``rect`` (the gold rim-glow)."""
+    gw, gh = int(rect.w) + spread * 2, int(rect.h) + spread * 2
+    sprite, pad = _blur_sprite(("gl", gw, gh, int(radius + spread),
+                                int(blur), int(alpha), color),
+                               gw, gh, radius + spread, color, alpha, blur)
+    surf.blit(sprite, (int(rect.x) - spread - pad, int(rect.y) - spread - pad))
+
+
+def _front_lit_shadow(surf, rect, radius, passes) -> None:
+    """Fully surrounding 'front-lit' shadow: concentric semi-transparent rings
+    inflate outward in all directions with no directional offset, approximating
+    a Gaussian halo on all four sides of the element.
+
+    ``passes`` — sequence of (spread_px, alpha) pairs, outermost first.
+    Each pass inflates the rect symmetrically and draws with the given alpha;
+    the inner passes stack on top so visible alpha increases toward the card edge.
+    """
+    for sp, al in passes:
+        sr = rect.inflate(int(sp) * 2, int(sp) * 2)
+        _aa_round_rect(surf, sr, (0, 0, 0, al), int(radius) + int(sp))
+
+
+def _radial_glow(surf, cx, cy, rw, rh, color, alpha) -> None:
+    """Static warm radial light (the ground glow beneath the cube). Cached."""
+    key = ("rad", int(rw), int(rh), color, int(alpha))
+    sprite = _SPRITE_CACHE.get(key)
+    if sprite is None:
+        if len(_SPRITE_CACHE) > 96:
+            _SPRITE_CACHE.clear()
+        W, H = max(2, int(rw * 2)), max(2, int(rh * 2))
+        base = pygame.Surface((W, H), pygame.SRCALPHA)
+        steps = 26
+        for i in range(steps, 0, -1):           # large→small: inner overwrites
+            t = i / steps
+            a = int(alpha * (1.0 - t) ** 2)      # soft quadratic falloff to edge
+            ew, eh = int(W * t), int(H * t)
+            pygame.draw.ellipse(base, (*color, a),
+                                pygame.Rect((W - ew) // 2, (H - eh) // 2, ew, eh))
+        sprite = _blur_down_up(base, 7)
+        _SPRITE_CACHE[key] = sprite
+    surf.blit(sprite, (int(cx - rw), int(cy - rh)))
+
+
+def _premium_card(surf, rect, s, *, radius=None, fill=PANEL_SURFACE, rim=GOLD_RIM,
+                  glow=GLOW_YELLOW, glow_alpha=46, shadow_alpha=28,
+                  shadow_blur=22, shadow_dy=12, rim_w=1.5, phase="all",
+                  shadow_rect=None) -> None:
+    """The shared elevated-white-card style: faint gold outer glow + warm soft
+    drop shadow + white fill + a thin gold rim. One function so every surface
+    (side panels, nav bar, Preview capsule, input, upsell) elevates identically
+    instead of hand-rolling depth per call.
+
+    ``phase`` splits the draw so a foreground object can be sandwiched between a
+    card's shadow and its fill: ``"back"`` paints only the glow + drop shadow,
+    ``"front"`` only the rim + fill, ``"all"`` (default) both. ``shadow_rect``
+    lets the shadow be cast for a TALLER/wider region than the card itself (e.g.
+    the right panel's shadow stretched up behind the Preview button)."""
+    r = int((_PANEL_CORNER if radius is None else radius) * s)
+    if phase in ("all", "back"):
+        srect = rect if shadow_rect is None else shadow_rect
+        if glow is not None and glow_alpha > 0:
+            _outer_glow(surf, srect, r, color=glow, blur=int(26 * s),
+                        spread=int(11 * s), alpha=glow_alpha)
+        _soft_shadow(surf, srect, r, blur=int(shadow_blur * s),
+                     dy=int(shadow_dy * s), alpha=shadow_alpha)
+    if phase in ("all", "front"):
+        if rim is not None:
+            rw = max(1, int(rim_w * s))
+            _aa_round_rect(surf, rect, rim, r)                      # rim underlay
+            _aa_round_rect(surf, rect.inflate(-2 * rw, -2 * rw), fill, max(1, r - rw))
+        else:
+            _aa_round_rect(surf, rect, fill, r)
+
+
+def _aa_circle(surf, center, radius, color, width=0) -> None:
+    """Anti-aliased filled (or outlined) circle — supersample + smoothscale, the
+    same crisp-corners trick as _aa_round_rect (pygame.draw.circle is jaggy)."""
+    radius = max(1, int(radius))
+    d = radius * 2
+    ss = _AA_SS
+    big = pygame.Surface((d * ss, d * ss), pygame.SRCALPHA)
+    pygame.draw.circle(big, color, (radius * ss, radius * ss), radius * ss,
+                       width=int(width * ss))
+    surf.blit(pygame.transform.smoothscale(big, (d, d)),
+              (int(center[0]) - radius, int(center[1]) - radius))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  DemoOverlay
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -248,15 +411,34 @@ class DemoOverlay:
         # editor and the live "Preview" (the real off-axis render). Switching
         # between them never edits the world, so all state persists for free.
         self._wb_view = "grid"            # "grid" | "preview"
-        self._wb_prev_world = None        # world to restore when leaving the tab
+        self._wb_prev_portal = None        # world to restore when leaving the tab
+        # World Builder authoring state. The right card holds the focusable prompt
+        # input ("Describe your portal…") plus the Send + Save buttons; the left
+        # card is a static explainer. All kept here so render stays allocation-free
+        # (the surface is signature-cached) and the engine never sees this state.
+        self._wb_prompt = ""              # current prompt text (<=150 chars)
+        self._wb_focused = False          # prompt input has keyboard focus
+        self._wb_prompt_rect = None
+        # Transient preview: Send runs Claude and stores the sanitized objects here
+        # (NOT saved). They're drawn on the Canvas Cube and mirrored to the grid_room
+        # scratch world.json so the live Preview shows them too. `_wb_preview_gen`
+        # bumps on every Send/Save/clear so the signature-cached surface invalidates.
+        self._wb_preview_objects: list[dict] = []
+        self._wb_preview_gen = 0
+        # Settings → Delete World flow: a toggleable list of user worlds, then a
+        # Yes/No confirmation modal for the chosen one. `_delete_target` is the slug
+        # awaiting confirmation (None = no modal); `_delete_card` is its modal rect.
+        self._delete_list_open = False
+        self._delete_target: str | None = None
+        self._delete_card = None
         # grid_room is the World Builder's working world — keep it loadable but
         # OUT of the Worlds-tab cycle (it's a blank canvas preview, not a world).
-        self._all_world_keys, self._world_names = self._load_worlds()
-        self._world_keys = [k for k in self._all_world_keys
+        self._all_portal_keys, self._portal_names = self._load_portals()
+        self._portal_keys = [k for k in self._all_portal_keys
                             if k != "grid_room"] or ["earth"]
-        self.active_world = str(self._pref("world", "earth"))
-        if self.active_world == "grid_room":
-            self.active_world = "earth"   # never persist the canvas world here
+        self.active_portal = str(self._pref("portal", "earth"))
+        if self.active_portal == "grid_room":
+            self.active_portal = "earth"   # never persist the canvas world here
 
         # Camera-access control. Flag file is the live cross-process source of
         # truth the engine polls; persists across restarts.
@@ -275,6 +457,9 @@ class DemoOverlay:
         self.fnt_small  = _load_font(int(13 * S), bold=True)
         self.fnt_status = _load_font(int(13 * S), bold=True)
         self.fnt_hint   = _load_font(int(15 * S))
+        # Dedicated tab font — unified size for ALL tab pills (active + inactive,
+        # orange + grey) so text never grows/shrinks on tab switch.
+        self.fnt_tab    = _load_font(int(14 * S), bold=True)
 
         # Animation / interaction
         self._ctrl_alpha = 1.0
@@ -322,15 +507,15 @@ class DemoOverlay:
 
     # ── World discovery (for the Browse Worlds picker) ──────────────────────────
 
-    def _load_worlds(self):
+    def _load_portals(self):
         """Return (keys, names): available world dir names + their display names,
         via the same WorldLoader the engine uses. Falls back to Earth-only."""
         try:
-            from Worlds.world_loader import WorldLoader
+            from Portals.portal_loader import PortalLoader
             base = Path(__file__).resolve().parent.parent
-            wdir = base / "Worlds"
+            wdir = base / "Portals"
             if not wdir.exists():
-                wdir = base / "worlds"
+                wdir = base / "portals"
             loader = WorldLoader(wdir)
             keys = loader.list_available_worlds() or ["earth"]
             names = {}
@@ -405,8 +590,8 @@ class DemoOverlay:
         (the real off-axis conversion of the grid world the user is building). On
         Settings/Community and the World Builder grid editor the engine skips the
         (expensive) scene draw — those show a solid card instead."""
-        return (self._active_tab == "worlds"
-                or (self._active_tab == "world_builder"
+        return (self._active_tab == "portals"
+                or (self._active_tab == "portal_builder"
                     and self._wb_view == "preview"))
 
     def _status_text(self) -> str:
@@ -506,11 +691,13 @@ class DemoOverlay:
         self._wb_back_bar = None
         self._wb_left_panel = None
         self._wb_right_panel = None
+        self._wb_prompt_rect = None
+        self._delete_card = None
         pad = int(16 * S)
         btn_gap = int(8 * S)
 
         # ── Tab bar (always visible across all tabs) ──────────────────────────
-        tab_specs = [("worlds", "Worlds"), ("world_builder", "World Builder"),
+        tab_specs = [("portals", "Portals"), ("portal_builder", "Portal Builder"),
                      ("community", "Community"), ("settings", "Settings")]
         tab_w, tab_h = int(124 * S), int(36 * S)
         tab_gap = int(6 * S)
@@ -520,21 +707,25 @@ class DemoOverlay:
         tabbar_h = tab_h + tb_pad * 2
         self._tabbar = pygame.Rect(w // 2 - tabbar_w // 2, int(20 * S),
                                    tabbar_w, tabbar_h)
+        # Bottom bar — identical geometry to the tab bar, same inset from the
+        # bottom as the tab bar is from the top. Placeholder for subscribe/pricing.
+        bb_y = h - int(20 * S) - tabbar_h
+        self._bottombar = pygame.Rect(self._tabbar.x, bb_y, tabbar_w, tabbar_h)
         for i, (key, _) in enumerate(tab_specs):
             tx = self._tabbar.x + tb_pad + i * (tab_w + tab_gap)
             self._buttons[f"tab:{key}"] = pygame.Rect(
                 tx, self._tabbar.y + tb_pad, tab_w, tab_h)
 
         # ── Worlds tab ────────────────────────────────────────────────────────
-        if self._active_tab == "worlds":
+        if self._active_tab == "portals":
             # World navigation arrows — flanking the scene, pulled in from the
             # edges toward the centre. They switch worlds instantly (no carousel)
             # and stay until Desktop Mode is active (the whole HUD hides then).
             arrow = int(56 * S)
             edge_inset = int(120 * S)
             ay = h // 2 - arrow // 2
-            self._buttons["world_prev"] = pygame.Rect(edge_inset, ay, arrow, arrow)
-            self._buttons["world_next"] = pygame.Rect(
+            self._buttons["portal_prev"] = pygame.Rect(edge_inset, ay, arrow, arrow)
+            self._buttons["portal_next"] = pygame.Rect(
                 w - edge_inset - arrow, ay, arrow, arrow)
             self._content_top = None
 
@@ -572,7 +763,32 @@ class DemoOverlay:
                     self._content_top + int(60 * S),
                     cam_btn_w, cam_btn_h)
 
-            elif self._active_tab == "world_builder":
+                # Delete World — toggles a list of the user's own worlds below it;
+                # picking one opens the Yes/No confirmation modal (built-ins and the
+                # grid_room scratch are never listed, so they can't be deleted).
+                del_y = self._buttons["camera_toggle"].bottom + int(20 * S)
+                self._buttons["delete_world"] = pygame.Rect(
+                    w // 2 - cam_btn_w // 2, del_y, cam_btn_w, cam_btn_h)
+                if self._delete_list_open:
+                    ry = self._buttons["delete_world"].bottom + int(14 * S)
+                    row_h, row_gap = int(46 * S), int(8 * S)
+                    for k in self._deletable_portals():
+                        self._buttons[f"del:{k}"] = pygame.Rect(
+                            w // 2 - cam_btn_w // 2, ry, cam_btn_w, row_h)
+                        ry += row_h + row_gap
+                if self._delete_target is not None:
+                    cw, chh = int(440 * S), int(232 * S)
+                    card = pygame.Rect(w // 2 - cw // 2, h // 2 - chh // 2, cw, chh)
+                    self._delete_card = card
+                    bw, bh = int(180 * S), int(48 * S)
+                    cgap = int(16 * S)
+                    by = card.bottom - int(24 * S) - bh
+                    self._buttons["del_confirm_no"] = pygame.Rect(
+                        w // 2 - bw - cgap // 2, by, bw, bh)
+                    self._buttons["del_confirm_yes"] = pygame.Rect(
+                        w // 2 + cgap // 2, by, bw, bh)
+
+            elif self._active_tab == "portal_builder":
                 # Both WB nav controls live on the tab-bar ROW as detached grey
                 # mini-bars holding a single tab-style pill — same top/height as
                 # the main tab bar, but visually disconnected from it.
@@ -581,23 +797,49 @@ class DemoOverlay:
                 if self._wb_view == "grid":
                     # Two big premium side panels flank the cube. Top aligned with
                     # the tab-bar row; bottom the same inset from the bottom as the
-                    # tabs are from the top (symmetric). Each fills its side gap
-                    # beside the tab bar.
+                    # tabs are from the top (symmetric).
+                    # Panels are CENTRED in their side zones: the gap from the window
+                    # edge to the panel equals the gap from the panel to the tab/cube
+                    # edge — both are `gap`. Previously `edge` (40 px) ≠ `gap` (16 px).
                     top = self._tabbar.y
+                    # Same vertical distance from bottom as tab bar is from top.
                     bottom = h - self._tabbar.y
-                    edge = int(40 * S)
                     gap = int(16 * S)
-                    # Left panel — full height of the zone (no button above it).
-                    lx0, lx1 = edge, self._tabbar.left - gap
+                    # Left panel — full height of the zone.
+                    lx0, lx1 = gap, self._tabbar.left - gap
                     self._wb_left_panel = pygame.Rect(lx0, top, lx1 - lx0, bottom - top)
-                    # Right column — Preview button on the tab-bar row, the right
-                    # panel directly UNDER it (button sized to fit the panel width).
-                    rx0, rx1 = self._tabbar.right + gap, w - edge
-                    btn_h = self._tabbar.h
-                    self._buttons["wb_preview"] = pygame.Rect(rx0, top, rx1 - rx0, btn_h)
-                    pgap = int(12 * S)
-                    self._wb_right_panel = pygame.Rect(
-                        rx0, top + btn_h + pgap, rx1 - rx0, bottom - (top + btn_h + pgap))
+                    # Right panel — also full height (Preview button is now INSIDE
+                    # the panel, between Send and Save — no button above the panel).
+                    rx0, rx1 = self._tabbar.right + gap, w - gap
+                    self._wb_right_panel = pygame.Rect(rx0, top, rx1 - rx0, bottom - top)
+
+                    # Right panel content: prompt input + four stacked buttons
+                    # (Restart → Send → Preview → Save World) pinned to the panel bottom.
+                    rp = self._wb_right_panel
+                    ipad = int(20 * S)
+                    iptop = rp.y + int(64 * S)
+                    save_h    = int(50 * S)
+                    preview_h = int(46 * S)
+                    send_h    = int(46 * S)
+                    restart_h = int(36 * S)
+                    bgap = int(12 * S)
+                    save_y    = rp.bottom - int(20 * S) - save_h
+                    preview_y = save_y - bgap - preview_h
+                    send_y    = preview_y - bgap - send_h
+                    restart_y = send_y - int(8 * S) - restart_h
+                    self._buttons["wb_save"] = pygame.Rect(
+                        rp.x + ipad, save_y, rp.w - ipad * 2, save_h)
+                    self._buttons["wb_preview"] = pygame.Rect(
+                        rp.x + ipad, preview_y, rp.w - ipad * 2, preview_h)
+                    self._buttons["wb_send"] = pygame.Rect(
+                        rp.x + ipad, send_y, rp.w - ipad * 2, send_h)
+                    self._buttons["wb_restart"] = pygame.Rect(
+                        rp.x + ipad, restart_y, rp.w - ipad * 2, restart_h)
+                    self._wb_prompt_rect = pygame.Rect(
+                        rp.x + ipad, iptop,
+                        rp.w - ipad * 2, max(int(40 * S), restart_y - int(16 * S) - iptop))
+                    self._buttons["wb_prompt"] = self._wb_prompt_rect
+                    # Left panel ("How It Works") is a static explainer — no controls.
                 else:
                     # Back to Canvas — centred in the gap between the window's left
                     # edge and the tab bar's left edge, on the tab-bar row.
@@ -630,11 +872,39 @@ class DemoOverlay:
             self._click(key)
         elif ev.type == pygame.MOUSEBUTTONUP and ev.button == 1:
             self._press_key = None
-        elif ev.type == pygame.KEYDOWN and ev.key in (pygame.K_ESCAPE, pygame.K_q):
-            self.should_quit = True
+        elif ev.type == pygame.KEYDOWN:
+            # While the World Builder prompt is focused, keystrokes edit the text
+            # (so typing "q" doesn't quit the app); Esc just blurs the field.
+            if self._wb_focused:
+                self._wb_handle_key(ev)
+            elif ev.key in (pygame.K_ESCAPE, pygame.K_q):
+                self.should_quit = True
 
     def _click(self, key: str | None) -> None:
+        # The delete confirmation is modal: while it's up only Yes/No are live.
+        if self._delete_target is not None:
+            if key == "del_confirm_yes":
+                self._delete_portal(self._delete_target)
+            elif key == "del_confirm_no":
+                self._delete_target = None
+                self._compute_layout()
+            return
+        # World Builder prompt focus: clicking the input focuses it; clicking
+        # anywhere else (Send, Save, empty space, another tab) blurs it.
+        if self._active_tab == "portal_builder" and self._wb_view == "grid":
+            self._wb_focused = (key == "wb_prompt")
         if key is None:
+            return
+        if key == "wb_prompt":
+            return                         # focus already set above; nothing else
+        if key == "wb_restart":
+            self._wb_restart()
+            return
+        if key == "wb_send":
+            self._wb_send()
+            return
+        if key == "wb_save":
+            self._wb_save()
             return
         if key.startswith("tab:"):
             tab = key.split(":", 1)[1]
@@ -642,19 +912,19 @@ class DemoOverlay:
                 # World Builder edits ONE world (grid_room). Entering the tab
                 # makes it the working world (remembering the prior selection);
                 # leaving restores it, so the Worlds-tab choice is untouched.
-                if tab == "world_builder":
-                    self._wb_prev_world = self.active_world
+                if tab == "portal_builder":
+                    self._wb_prev_portal = self.active_portal
                     self._wb_view = "grid"
-                    self._set_world("grid_room")
-                elif self._active_tab == "world_builder" and self._wb_prev_world:
-                    self._set_world(self._wb_prev_world)
+                    self._set_portal("grid_room")
+                elif self._active_tab == "portal_builder" and self._wb_prev_portal:
+                    self._set_portal(self._wb_prev_portal)
                 self._active_tab = tab
                 self._compute_layout()
             return
         if key == "wb_preview":
             # Enter the live Preview — the real off-axis render of the grid world.
             self._wb_view = "preview"
-            self._set_world("grid_room")
+            self._set_portal("grid_room")
             self._compute_layout()
             return
         if key == "wb_back":
@@ -689,31 +959,233 @@ class DemoOverlay:
                 self._set_paused(False)
                 self._toast_msg(STRINGS["demo_ui"]["toasts"]["desktop_resumed"], 2.2)
             # action == "none" (camera settling): no-op, the label already says so.
-        elif key in ("world_prev", "world_next"):
-            self._cycle_world(-1 if key == "world_prev" else +1)
+        elif key in ("portal_prev", "portal_next"):
+            self._cycle_portal(-1 if key == "portal_prev" else +1)
         elif key == "camera_toggle":
             self._set_camera_enabled(not self.camera_enabled)
+        elif key == "delete_world":
+            self._delete_list_open = not self._delete_list_open
+            self._compute_layout()
+        elif key.startswith("del:"):
+            self._delete_target = key.split(":", 1)[1]
+            self._compute_layout()
 
-    def _set_world(self, name: str) -> None:
+    def _set_portal(self, name: str) -> None:
         """Make `name` the active world (engine hot-swaps from the saved pref next
         frame). No-op if it is already active or not a known world."""
-        if name == self.active_world or name not in (self._all_world_keys or []):
+        if name == self.active_portal or name not in (self._all_portal_keys or []):
             return
-        self.active_world = name
-        self._save_pref("world", name)
+        self.active_portal = name
+        self._save_pref("portal", name)
 
-    def _cycle_world(self, step: int) -> None:
+    def _cycle_portal(self, step: int) -> None:
         """Instantly switch to the previous/next world. No animation — the engine
         polls the saved preference live and swaps the scene next frame."""
-        keys = self._world_keys or ["earth"]
-        if self.active_world in keys:
-            i = keys.index(self.active_world)
+        keys = self._portal_keys or ["earth"]
+        if self.active_portal in keys:
+            i = keys.index(self.active_portal)
         else:
             i = 0
         name = keys[(i + step) % len(keys)]
-        self.active_world = name
-        self._save_pref("world", name)
-        self._toast_msg(f"World · {self._world_names.get(name, name)}", 1.8)
+        self.active_portal = name
+        self._save_pref("portal", name)
+        self._toast_msg(f"World · {self._portal_names.get(name, name)}", 1.8)
+
+    # ── World Builder authoring (prompt input + Claude save pipeline) ───────────
+
+    def _wb_handle_key(self, ev) -> None:
+        """Edit the prompt text from a KEYDOWN while the field is focused."""
+        if ev.key == pygame.K_ESCAPE:
+            self._wb_focused = False
+            return
+        if ev.key == pygame.K_BACKSPACE:
+            self._wb_prompt = self._wb_prompt[:-1]
+            return
+        if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_TAB):
+            return                          # single-line-ish prompt; no newlines
+        ch = ev.unicode
+        if ch and ch.isprintable() and len(self._wb_prompt) < 150:
+            self._wb_prompt += ch
+
+    # ── Worlds-dir helpers (shared by Send / Save / Delete) ─────────────────────
+
+    def _portals_dir(self) -> Path:
+        """The Worlds/ directory (handles the lowercase fallback), matching the
+        same base resolution `_load_portals` uses so rescans stay consistent."""
+        base = Path(__file__).resolve().parent.parent
+        wdir = base / "Portals"
+        return wdir if wdir.exists() else base / "portals"
+
+    def _grid_room_path(self) -> Path:
+        return self._portals_dir() / "grid_room" / "world.json"
+
+    def _write_scratch(self, objects: list[dict]) -> None:
+        """Mirror the previewed objects into the grid_room scratch world.json so the
+        engine's mtime hot-reload (`world_runtime.poll`) shows them in live Preview.
+        Best-effort: a write failure only means Preview lags, never a HUD crash."""
+        try:
+            path = self._grid_room_path()
+            world_def = json.loads(path.read_text())
+            world_def.setdefault("assets", {})["placeable_objects"] = objects
+            path.write_text(json.dumps(world_def, indent=2))
+        except Exception:
+            pass
+
+    # ── World Builder authoring (Send = preview, Save = commit a new world) ─────
+
+    def _wb_restart(self) -> None:
+        """Restart: clear the canvas, scratch, and prompt. Explicit user action only."""
+        self._wb_preview_objects = []
+        self._wb_preview_gen += 1
+        self._wb_prompt = ""
+        self._wb_focused = False
+        self._write_scratch([])
+        self._toast_msg("Canvas cleared")
+
+    def _wb_send(self) -> None:
+        """Send: prompt → Claude → validate → PREVIEW (no save).
+
+        The sanitized objects are held in `_wb_preview_objects` (drawn on the Canvas
+        Cube) and mirrored to the grid_room scratch world so the live Preview shows
+        them too. Nothing is committed to the user's Worlds until Save. Every failure
+        only toasts; it never crashes the HUD."""
+        prompt = (self._wb_prompt or "").strip()
+        if not prompt:
+            self._toast_msg("Describe your portal first", 2.4)
+            return
+        try:
+            from Portals.placeable import sanitize_objects
+            try:
+                from UI.world_builder_api import generate_world_objects
+            except ImportError:
+                from world_builder_api import generate_world_objects
+        except Exception:
+            self._toast_msg("Portal Builder unavailable", 2.6)
+            return
+
+        path = self._grid_room_path()
+        try:
+            world_def = json.loads(path.read_text())
+        except Exception:
+            self._toast_msg("Couldn't read the grid world", 2.6)
+            return
+
+        self._toast_msg("Building your world…", 6.0)
+        raw = generate_world_objects(prompt, world_def)
+        divisions = int(world_def.get("rendering", {}).get("grid_divisions", 8) or 8)
+        objects = sanitize_objects(raw, divisions)        # validate BEFORE anything
+        if not objects:
+            self._toast_msg("No objects generated — try rephrasing "
+                            "(check ANTHROPIC_API_KEY)", 3.4)
+            return
+
+        self._wb_preview_objects = objects
+        self._wb_preview_gen += 1
+        self._write_scratch(objects)       # drives the Canvas Cube + live Preview
+        self._wb_focused = False
+        n = len(objects)
+        self._toast_msg(f"Preview ready — {n} object{'s' if n != 1 else ''}. "
+                        "Save to keep it.", 3.2)
+
+    def _derive_portal_name(self, prompt: str) -> str:
+        """A friendly display name from the prompt (first few words, Title Cased)."""
+        words = re.findall(r"[A-Za-z0-9]+", prompt or "")[:5]
+        if not words:
+            return "My World"
+        return " ".join(w.capitalize() for w in words)[:40]
+
+    def _unique_portal_slug(self, name: str) -> str:
+        """A filesystem-safe, collision-free directory slug for a new world. Never
+        a built-in or an existing world dir (numeric suffix added if needed)."""
+        base = re.sub(r"[^a-z0-9]+", "_", (name or "").lower()).strip("_") or "world"
+        existing = set(self._all_portal_keys or []) | BUILTIN_PORTALS
+        slug, i = base, 2
+        while slug in existing or (self._portals_dir() / slug).exists():
+            slug = f"{base}_{i}"
+            i += 1
+        return slug
+
+    def _wb_save(self) -> None:
+        """Save: commit the currently-previewed world to "my worlds".
+
+        Creates a NEW `Worlds/<slug>/world.json` — a copy of the grid_room scratch
+        (objects already baked in by Send) with a unique name — then rescans so it
+        joins the Worlds-tab cycle. grid_room itself stays the reusable blank scratch.
+        Requires a preview (Send first); every failure only toasts."""
+        if not self._wb_preview_objects:
+            self._toast_msg("Press Send to preview a world first", 2.8)
+            return
+        try:
+            world_def = json.loads(self._grid_room_path().read_text())
+        except Exception:
+            self._toast_msg("Couldn't read the grid world", 2.6)
+            return
+
+        name = self._derive_world_name(self._wb_prompt)
+        slug = self._unique_world_slug(name)
+        world_def["name"] = name
+        world_def.setdefault("assets", {})["placeable_objects"] = self._wb_preview_objects
+        try:
+            wdir = self._portals_dir() / slug
+            wdir.mkdir(parents=True, exist_ok=True)
+            (wdir / "world.json").write_text(json.dumps(world_def, indent=2))
+        except Exception:
+            self._toast_msg("Couldn't save the world", 2.6)
+            return
+
+        # Rescan so the new world appears in the Worlds-tab cycle (grid_room stays out).
+        self._all_portal_keys, self._portal_names = self._load_portals()
+        self._portal_keys = [k for k in self._all_portal_keys
+                            if k != "grid_room"] or ["earth"]
+        # Reset the scratch for the next build.
+        self._wb_preview_objects = []
+        self._wb_preview_gen += 1
+        self._wb_prompt = ""
+        self._wb_focused = False
+        self._write_scratch([])
+        self._toast_msg(f"Saved “{name}” to your worlds", 3.0)
+
+    # ── Settings → Delete World ─────────────────────────────────────────────────
+
+    def _deletable_portals(self) -> list[str]:
+        """User-created worlds only — built-ins + the grid_room scratch are excluded
+        so they can never be offered for deletion."""
+        return [k for k in self._portal_keys if k not in BUILTIN_PORTALS]
+
+    def _delete_portal(self, slug: str) -> None:
+        """Remove a user world after the Yes confirmation. Safety: refuse built-ins
+        and anything that doesn't resolve to a direct child of Worlds/; rescan and
+        fall back to a safe default if the active/prev world was the one removed."""
+        wdir = self._portals_dir()
+        target = (wdir / slug).resolve()
+        if slug in BUILTIN_PORTALS or target.parent != wdir.resolve() or not target.is_dir():
+            self._delete_target = None
+            self._toast_msg("That portal can't be deleted", 2.6)
+            self._compute_layout()
+            return
+        try:
+            import shutil
+            shutil.rmtree(target)
+        except Exception:
+            self._delete_target = None
+            self._toast_msg("Couldn't delete that world", 2.6)
+            self._compute_layout()
+            return
+
+        name = self._portal_names.get(slug, slug)
+        self._all_portal_keys, self._portal_names = self._load_portals()
+        self._portal_keys = [k for k in self._all_portal_keys
+                            if k != "grid_room"] or ["earth"]
+        if self.active_portal == slug:
+            self.active_portal = "earth"
+            self._save_pref("portal", "earth")
+        if self._wb_prev_portal == slug:
+            self._wb_prev_portal = "earth"
+        self._delete_target = None
+        if not self._deletable_portals():
+            self._delete_list_open = False
+        self._compute_layout()
+        self._toast_msg(f"Deleted “{name}”", 2.6)
 
     # ── Per-frame update ───────────────────────────────────────────────────────
 
@@ -730,7 +1202,7 @@ class DemoOverlay:
         # scene, where dimming keeps the world the star). The Settings/Community
         # pages are solid full cards — fading them would reveal the dark scene
         # through the card, so they stay at full opacity.
-        on_worlds = self._active_tab == "worlds"
+        on_worlds = self._active_tab == "portals"
         idle = (0.0 if (self.hover is not None or not on_worlds)
                 else (self._now() - self._last_input))
         ca_target = 0.34 if idle > 4.0 else 1.0
@@ -748,18 +1220,30 @@ class DemoOverlay:
 
     # ── Surface composition (pure pygame, physical px) ────────────────────────────
 
+    def _scratch_mtime(self) -> float:
+        """mtime of the grid_room scratch world.json, 0.0 on any error. Cheap stat,
+        matched to the pattern used by WorldRuntime.poll()."""
+        try:
+            return self._grid_room_path().stat().st_mtime
+        except Exception:
+            return 0.0
+
     def _signature(self):
         return (
             round(self._ctrl_alpha, 2),
             self._primary(), self.live, self.daemon_running, self.desktop_paused,
             self.tracking_active, self.camera_denied,
-            self._active_tab, self._wb_view, self.active_world, self.camera_enabled,
+            self._active_tab, self._wb_view, self.active_portal, self.camera_enabled,
+            self._wb_prompt, self._wb_focused, self._wb_preview_gen,
+            self._delete_list_open, self._delete_target, tuple(self._portal_keys),
             self._toast[0] if self._toast else None,
             self._press_key,
             tuple(round(self._hover_anim.get(k, 0.0), 2) for k in self._buttons),
+            self._scratch_mtime(),
         )
 
-    def _draw_btn(self, surf, rect, label, variant, size, dark, *, key=None):
+    def _draw_btn(self, surf, rect, label, variant, size, dark, *, key=None,
+                  force_press=False):
         """Render one control with the shared Button primitive (UI/buttons.py).
 
         The overlay stores its rects in PHYSICAL px (already × self.s); Button
@@ -768,16 +1252,42 @@ class DemoOverlay:
         keyed by `key`, so the new look stays in lock-step with the tested
         hit-testing — no easing is introduced on hover (the frozen rule). Returns
         the Button so callers can overlay a glyph (the nav arrows / WB chevrons).
+
+        ``force_press`` pins the button in its pressed "click-in" state regardless
+        of the cursor — used by the selected tab, which reads as permanently
+        toggled-in.
         """
         S = self.s
         logical = pygame.Rect(round(rect.x / S), round(rect.y / S),
                               round(rect.w / S), round(rect.h / S))
         b = Button(logical, label, variant=variant, size=size, dark=dark)
-        if key is not None:
-            b._hover_t = self._hover_anim.get(key, 0.0)        # binary (instant)
-            b._press_t = 1.0 if self._press_key == key else 0.0
+        b._hover_t = 0.0                                        # no hover animation
+        b._press_t = 1.0 if (force_press or (key is not None
+                                             and self._press_key == key)) else 0.0
         b.draw(surf, S)
         return b
+
+    def _draw_grey_tab(self, surf, r, text, key, active, rad, S) -> None:
+        """A raised dark-grey tab pill. Occupied tab shows the click-in look:
+        0.98 shrink + thick border ring a few shades darker than the fill.
+        No hover animation, no inset strip."""
+        pr = pygame.Rect(r)
+        fill = GREY_CONTAINER
+        if active:
+            cx, cy = pr.center
+            pr = pygame.Rect(0, 0, int(pr.w * 0.98), int(pr.h * 0.98))
+            pr.center = (cx, cy)
+            fill = tuple(int(c * 0.86) for c in GREY_CONTAINER[:3])
+            # Thick border ring: draw border colour across the full rect, then fill
+            # inset so a darker ring is visible around the edge.
+            bw = int(3 * S)
+            brd = tuple(max(0, int(c * 0.62)) for c in GREY_CONTAINER[:3])
+            _aa_round_rect(surf, pr, brd, rad)
+            _aa_round_rect(surf, pr.inflate(-bw * 2, -bw * 2), fill,
+                           max(1, rad - bw))
+        else:
+            _aa_round_rect(surf, pr, fill, rad)
+        _text_shadow(surf, text, self.fnt_tab, (255, 255, 255), pr.center, S)
 
     def render_surface(self) -> pygame.Surface:
         sig = self._signature()
@@ -799,7 +1309,7 @@ class DemoOverlay:
         layer = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
 
         # ── Worlds tab — nav arrows, world-name pill, bottom action group ─────
-        if self._active_tab == "worlds":
+        if self._active_tab == "portals":
             # (No world-name title pill — the active world is announced only by
             # the quick toast above the bottom action group on switch.)
 
@@ -827,54 +1337,110 @@ class DemoOverlay:
 
         # ── Settings tab — blank white page + camera-access toggle ────────────
         elif self._active_tab == "settings":
-            layer.fill(BTN_FILL_REST)                       # full-bleed blank white
-            _text_shadow(layer, "Settings", self.fnt_btn, BTN_TEXT,
+            layer.fill(PAGE_BG)                             # warm off-white page
+            _text_shadow(layer, "Settings", self.fnt_btn, INK,
                          (cx, self._content_top), S)
             if "camera_toggle" in self._buttons:
                 r = self._buttons["camera_toggle"]
                 cam_label = ("Camera Access  ·  On" if self.camera_enabled
                              else "Camera Access  ·  Off")
-                # Toggle state is conveyed by emphasis: On = filled primary,
-                # Off = outlined secondary. Light palette — it sits on the white
-                # Settings page, so the border/tint read without a grey backing.
-                variant = "primary" if self.camera_enabled else "secondary"
+                # Toggle state is conveyed by emphasis: On = orange accent (the
+                # premium "enabled" colour), Off = outlined secondary. Sits on the
+                # warm Settings page, so the tint reads without a grey backing.
+                variant = "accent" if self.camera_enabled else "secondary"
                 self._draw_btn(layer, r, cam_label, variant, "lg", dark=False,
                                key="camera_toggle")
+            # Delete World — outlined until opened (destructive is reserved for the
+            # final Yes), then the user's own worlds list below it.
+            if "delete_world" in self._buttons:
+                r = self._buttons["delete_world"]
+                self._draw_btn(layer, r, "Delete Portal", "secondary", "lg",
+                               dark=False, key="delete_world")
+            if self._delete_list_open:
+                rows = self._deletable_portals()
+                if not rows:
+                    _text_shadow(layer, "No custom worlds yet — build one in "
+                                 "World Builder.", self.fnt_hint, INK_SOFT,
+                                 (cx, self._buttons["delete_world"].bottom + int(40 * S)), S)
+                else:
+                    for k in rows:
+                        bk = f"del:{k}"
+                        if bk not in self._buttons:
+                            continue
+                        rr = self._buttons[bk]
+                        _premium_card(layer, rr, S, radius=_BTN_CORNER, glow_alpha=0,
+                                      shadow_alpha=18, shadow_blur=12, shadow_dy=5)
+                        nm = self.fnt_hint.render(self._portal_names.get(k, k), True, INK)
+                        layer.blit(nm, nm.get_rect(
+                            midleft=(rr.left + int(18 * S), rr.centery)))
+                        dl = self.fnt_small.render("Delete", True, (211, 47, 47))
+                        layer.blit(dl, dl.get_rect(
+                            midright=(rr.right - int(18 * S), rr.centery)))
 
         # ── World Builder tab — grid editor / live preview ────────────────────
-        elif self._active_tab == "world_builder":
+        elif self._active_tab == "portal_builder":
             if self._wb_view == "grid":
-                # Grid editor: a white page with the cube centred between two big
-                # premium (navy/gold) side panels. The cube is drawn first so the
-                # panels cleanly occlude any receding overflow at their edges.
-                layer.fill(BTN_FILL_REST)                   # full-bleed blank white
+                # Grid editor: warm off-white page with the cube floating at the
+                # centre between two elevated WHITE cards (soft neumorphism).
+                layer.fill(PAGE_BG)                         # warm off-white page
+
+                # Side-panel shadows are laid down FIRST so the cube draws ON TOP
+                # of them — each panel's shadow falls BEHIND the cube, not across
+                # it. The right column's shadow is stretched UP to include the
+                # Preview button so it reads as one continuous shadow that matches
+                # the left panel's full height.
+                # Side-panel + Preview shadows — fully surrounding front-lit style
+                # (no directional offset; four concentric rings expand on every side).
+                # Drawn BEFORE the cube so the cube sits ON TOP of the halo.
+                pan_rad  = int(_PANEL_CORNER  * S)
+                pv_rad   = int(_TABBAR_CORNER * S)
+                # Large-element passes (panels): wide outer ring → tight inner ring.
+                _PAN_PASSES = (
+                    (int(10 * S), 14),
+                    (int(6  * S), 22),
+                    (int(3  * S), 32),
+                    (int(1  * S), 40),
+                )
+                if self._wb_left_panel:
+                    _front_lit_shadow(layer, self._wb_left_panel, pan_rad, _PAN_PASSES)
+                if self._wb_right_panel:
+                    _front_lit_shadow(layer, self._wb_right_panel, pan_rad, _PAN_PASSES)
+                # Preview is now inside the right panel — no separate floating shadow.
+
+                # The cube, drawn over the inner halo of each panel shadow.
                 self._draw_builder_canvas(layer, S)
 
-                # Premium side panels (golden-yellow fill, with a border a few
-                # shades darker than the fill — drawn as an inflated underlay, at
-                # double the previous thickness). Placeholders for the World-Builder
-                # explainer (left) and build settings (right) to come.
-                pcorner = int(_PANEL_CORNER * S)
-                border = int(8 * S)            # doubled (was 4*S)
-                for panel, title in ((self._wb_left_panel, "World Builder"),
-                                     (self._wb_right_panel, "Build Settings")):
-                    if not panel:
-                        continue
-                    _aa_round_rect(layer, panel.inflate(border, border),
-                                   PREMIUM_GOLD_BORDER, pcorner + border // 2)
-                    _aa_round_rect(layer, panel, PREMIUM_GOLD, pcorner)
-                    # Bold navy title near the top.
-                    _text_shadow(layer, title, self.fnt_btn, PREMIUM_NAVY,
-                                 (panel.centerx, panel.top + int(34 * S)), S)
+                # Gold rim glow — drawn before fills so it halos outward around the
+                # gold edge; the opaque white fill covers the glow centre, leaving
+                # only the exterior shimmer visible. Same blur/spread as the old
+                # _premium_card glow pass, revived without touching the shadow layer.
+                _glow_blur   = max(3, int(5 * S))
+                _glow_spread = max(2, int(4 * S))
+                for panel in (self._wb_left_panel, self._wb_right_panel):
+                    if panel:
+                        _outer_glow(layer, panel, pan_rad,
+                                    color=GLOW_YELLOW, blur=_glow_blur,
+                                    spread=_glow_spread, alpha=62)
 
-                # Preview button — reverted to the white tab pill on a grey
-                # container (sized to the right panel, sitting above it).
-                if "wb_preview" in self._buttons:
-                    r = self._buttons["wb_preview"]
-                    _aa_round_rect(layer, r, GREY_CONTAINER, int(_TABBAR_CORNER * S))
-                    inner = r.inflate(-int(12 * S), -int(12 * S))
-                    self._draw_btn(layer, inner, "Preview", "primary", "sm",
-                                   dark=True, key="wb_preview")
+                # Elevated white side panels — fills (rim + white surface) ON TOP
+                # of cube overflow and glow. The brand lockup tops the left card.
+                for panel in (self._wb_left_panel, self._wb_right_panel):
+                    if panel:
+                        _premium_card(layer, panel, S, radius=_PANEL_CORNER,
+                                      phase="front")
+                self._draw_wb_logo(layer, S)
+                self._panel_header(layer, self._wb_left_panel,
+                                   "How It Works", S, top_off=78)
+                self._panel_header(layer, self._wb_right_panel,
+                                   "Portal Builder", S, top_off=34)
+
+                # Right panel — the "Describe your portal…" prompt input + the
+                # Send (preview) and Save (commit) buttons stacked beneath it.
+                self._draw_wb_prompt(layer, S)
+                self._draw_wb_actions(layer, S)
+                # Left panel — a static explainer of what World Builder is + advice.
+                self._draw_wb_left(layer, S)
+                # Preview is drawn inside _draw_wb_actions (between Send and Save).
             else:
                 # Live preview: transparent over the real off-axis 3-D render
                 # (preview_active drives the engine). "Back to Canvas" sits on the
@@ -888,8 +1454,8 @@ class DemoOverlay:
 
         # ── Community tab — blank white page, coming soon ─────────────────────
         elif self._active_tab == "community":
-            layer.fill(BTN_FILL_REST)                       # full-bleed blank white
-            _text_shadow(layer, "Community", self.fnt_btn, BTN_TEXT,
+            layer.fill(PAGE_BG)                             # warm off-white page
+            _text_shadow(layer, "Community", self.fnt_btn, INK,
                          (cx, self._content_top), S)
             _text_shadow(layer, "Coming Soon", self.fnt_hint, GREY_TEXT_DIM,
                          (cx, self.h // 2), S)
@@ -899,20 +1465,49 @@ class DemoOverlay:
         surf.blit(layer, (0, 0))
 
         # ── Tab bar — drawn last, on `surf`, so it is NEVER idle-faded and its
-        # hover feedback is instant/crisp (dark grey container, white active pill).
-        _aa_round_rect(surf, self._tabbar, GREY_CONTAINER, int(_TABBAR_CORNER * S))
+        # hover feedback is instant/crisp. A floating WHITE container holds a row
+        # of push-button tabs.
+        # Container shadow: same direct-offset approach as the individual tabs —
+        # a dark semi-transparent copy of the bar shape shifted down.
+        tb_rad = int(_TABBAR_CORNER * S)
+        # Tab bar container shadow — front-lit (all sides), hidden on Worlds tab
+        # (the bar floats over the live scene there; any shadow reads oddly).
+        if self._active_tab != "worlds":
+            _front_lit_shadow(surf, self._tabbar, tb_rad, (
+                (int(6 * S), 16),
+                (int(3 * S), 28),
+                (int(1 * S), 44),
+            ))
+        _aa_round_rect(surf, self._tabbar, PANEL_SURFACE, tb_rad)
+        tab_rad = int(_BTN_CORNER * S)
         for key, text in (("tab:worlds", "Worlds"),
-                          ("tab:world_builder", "World Builder"),
+                          ("tab:portal_builder", "Portal Builder"),
                           ("tab:community", "Community"),
                           ("tab:settings", "Settings")):
             r = self._buttons[key]
-            # Inverted scheme: the OCCUPIED tab is a BLACK pill (primary in the
-            # LIGHT palette → near-black fill, off-white text); the rest are WHITE
-            # pills (primary in the DARK palette → off-white fill, black text).
-            # The grey tab-bar container behind them is unchanged.
             active = key == f"tab:{self._active_tab}"
-            self._draw_btn(surf, r, text, "primary", "sm",
-                           dark=not active, key=key)
+            builder = key == "tab:world_builder"
+            # Drop shadow only on unoccupied, unpressed tabs — the occupied tab
+            # reads as sunk-in so it gets no shadow for its entire tenure.
+            if not active and self._press_key != key:
+                _aa_round_rect(surf, r.move(0, int(4 * S)), (0, 0, 0, 72), tab_rad)
+            if builder:
+                # World Builder is always the orange accent pill — both states drawn
+                # manually so fnt_tab is used consistently (no Button-internal sizing).
+                if active:
+                    # Occupied: thick border ring + fill + white text.
+                    bw = int(3 * S)
+                    brd = tuple(max(0, int(c * 0.68)) for c in ACCENT_ORANGE)
+                    _aa_round_rect(surf, r, brd, tab_rad)
+                    _aa_round_rect(surf, r.inflate(-bw * 2, -bw * 2),
+                                   ACCENT_ORANGE, max(1, tab_rad - bw))
+                else:
+                    # Unoccupied: plain orange pill.
+                    _aa_round_rect(surf, r, ACCENT_ORANGE, tab_rad)
+                _text_shadow(surf, text, self.fnt_tab, (255, 255, 255), r.center, S)
+            else:
+                # Dark-grey pill; the occupied one shows the click-in look + border.
+                self._draw_grey_tab(surf, r, text, key, active, tab_rad, S)
 
         # Toast (does not fade with idle). On the Worlds tab it floats just above
         # the bottom action group; elsewhere it sits near the bottom edge — never
@@ -930,8 +1525,239 @@ class DemoOverlay:
             _aa_round_rect(surf, rect, BTN_FILL_REST, int(_BTN_CORNER * S))
             _text_shadow(surf, text, self.fnt_hint, BTN_TEXT, rect.center, S)
 
+        # ── Bottom bar — placeholder for subscribe / pricing content ─────────────
+        # Identical geometry to the tab bar (same width, same height, same inset
+        # from the bottom as the tab bar is from the top). Solid accent-orange fill
+        # with the same front-lit shadow as the top bar.
+        if (hasattr(self, "_bottombar") and self._bottombar
+                and self._active_tab == "portal_builder"
+                and self._wb_view == "grid"):
+            _front_lit_shadow(surf, self._bottombar, tb_rad, (
+                (int(6 * S), 16),
+                (int(3 * S), 28),
+                (int(1 * S), 44),
+            ))
+            _aa_round_rect(surf, self._bottombar, ACCENT_ORANGE, tb_rad)
+
+        # ── Delete-World confirmation modal — on top of everything, modal.
+        if self._delete_target is not None and self._delete_card:
+            veil = pygame.Surface((self.w, self.h), pygame.SRCALPHA)
+            veil.fill((28, 24, 18, 120))                    # warm dim, lighter scrim
+            surf.blit(veil, (0, 0))
+            card = self._delete_card
+            _premium_card(surf, card, S, radius=_PANEL_CORNER, glow_alpha=40,
+                          shadow_alpha=48, shadow_blur=30, shadow_dy=18)
+            name = self._portal_names.get(self._delete_target, self._delete_target)
+            _text_shadow(surf, "Delete this world?", self.fnt_btn, INK,
+                         (card.centerx, card.top + int(54 * S)), S)
+            _text_shadow(surf, f"“{name}” will be permanently removed.",
+                         self.fnt_hint, INK_SOFT,
+                         (card.centerx, card.top + int(96 * S)), S)
+            _text_shadow(surf, "Are you sure you want to delete this?",
+                         self.fnt_hint, INK_SOFT,
+                         (card.centerx, card.top + int(120 * S)), S)
+            self._draw_btn(surf, self._buttons["del_confirm_no"], "No",
+                           "secondary", "md", dark=False, key="del_confirm_no")
+            self._draw_btn(surf, self._buttons["del_confirm_yes"], "Yes, delete",
+                           "destructive", "md", dark=False, key="del_confirm_yes")
+
         self._cached = surf
         return surf
+
+    # ── World Builder panel content (prompt input + build settings) ─────────────
+
+    @staticmethod
+    def _wrap_lines(text, max_w, font):
+        """Greedy word-wrap to ``max_w`` px; long single words break by chars."""
+        lines, cur = [], ""
+        for word in text.split(" "):
+            # A word wider than the box on its own gets char-broken first.
+            while font.size(word)[0] > max_w and len(word) > 1:
+                piece = ""
+                for ch in word:
+                    if not piece or font.size(piece + ch)[0] <= max_w:
+                        piece += ch
+                    else:
+                        break
+                if cur:
+                    lines.append(cur); cur = ""
+                lines.append(piece)
+                word = word[len(piece):]
+            trial = word if not cur else cur + " " + word
+            if not cur or font.size(trial)[0] <= max_w:
+                cur = trial
+            else:
+                lines.append(cur)
+                cur = word
+        if cur:
+            lines.append(cur)
+        return lines
+
+    def _draw_wrapped(self, surf, text, rect, color, font, S) -> None:
+        """Left-aligned, word-wrapped text inside ``rect`` (clipped to height)."""
+        pad = int(12 * S)
+        max_w = rect.w - pad * 2
+        if max_w <= 0:
+            return
+        line_h = font.get_linesize()
+        y = rect.y + pad
+        for ln in self._wrap_lines(text, max_w, font):
+            if y + line_h > rect.bottom - pad:
+                break
+            surf.blit(font.render(ln, True, color), (rect.x + pad, y))
+            y += line_h
+
+    def _draw_wrapped_para(self, surf, text, rect, color, font, S) -> None:
+        """Like ``_draw_wrapped`` but honours explicit ``\\n`` paragraph breaks
+        (blank lines get a half-line of air). Clipped to the rect height."""
+        pad = int(12 * S)
+        max_w = rect.w - pad * 2
+        if max_w <= 0:
+            return
+        line_h = font.get_linesize()
+        y = rect.y + pad
+        for para in text.split("\n"):
+            if not para:
+                y += line_h // 2
+                continue
+            for ln in self._wrap_lines(para, max_w, font):
+                if y + line_h > rect.bottom - pad:
+                    return
+                surf.blit(font.render(ln, True, color), (rect.x + pad, y))
+                y += line_h
+
+    # ── Premium World Builder chrome (logo, headers, glyphs) ────────────────────
+
+    def _gold_icon_chip(self, layer, cx, cy, size_log, S) -> None:
+        """Small gold app-icon chip (rounded square, lighter core) for a header."""
+        sz = int(size_log * S)
+        rad = int(6 * S)
+        rect = pygame.Rect(0, 0, sz, sz)
+        rect.center = (int(cx), int(cy))
+        _soft_shadow(layer, rect, rad, blur=int(7 * S), dy=int(2 * S), alpha=40)
+        _aa_round_rect(layer, rect, ACCENT_ORANGE, rad)
+        inner = rect.inflate(-int(sz * 0.44), -int(sz * 0.44))
+        _aa_round_rect(layer, inner, ACCENT_ORANGE_HI, max(1, rad - int(2 * S)))
+
+    def _panel_header(self, layer, panel, title, S, top_off=34) -> None:
+        """Left-aligned card title with a gold icon chip (premium, not centred)."""
+        if not panel:
+            return
+        cy = panel.top + int(top_off * S)
+        pad = int(22 * S)
+        chip = 18
+        cx = panel.left + pad + int(chip * S / 2)
+        self._gold_icon_chip(layer, cx, cy, chip, S)
+        tx = panel.left + pad + int(chip * S) + int(12 * S)
+        t = self.fnt_btn.render(title, True, INK)
+        layer.blit(t, t.get_rect(midleft=(tx, cy)))
+
+    def _draw_wb_logo(self, layer, S) -> None:
+        """IRIS brand lockup at the top of the left card — a gold iris glyph plus
+        a letter-spaced wordmark. Placeholder for the final logo; just presented
+        with premium spacing/alignment (keep, don't redesign)."""
+        lp = self._wb_left_panel
+        if not lp:
+            return
+        cy = lp.top + int(34 * S)
+        pad = int(22 * S)
+        r = int(11 * S)
+        gx = lp.left + pad + r
+        _aa_circle(layer, (gx, cy), r, ACCENT_ORANGE)               # iris ring
+        _aa_circle(layer, (gx, cy), int(r * 0.46), PANEL_SURFACE)   # cream pupil
+        _aa_circle(layer, (gx, cy), int(r * 0.22), ACCENT_ORANGE_HI)
+        # Letter-spaced wordmark.
+        x = gx + r + int(12 * S)
+        for ch in "IRIS":
+            g = self.fnt_btn.render(ch, True, INK)
+            layer.blit(g, g.get_rect(midleft=(x, cy)))
+            x += g.get_width() + int(2 * S)
+
+    def _draw_eye_glyph(self, layer, rect, S) -> None:
+        """Gold 'eye' icon + centred 'Preview' lockup inside the capsule."""
+        tw = self.fnt_small.size("Preview")[0]
+        eye_w = int(24 * S)
+        total = eye_w + int(10 * S) + tw
+        x0 = rect.centerx - total // 2
+        ex, ey = x0 + eye_w // 2, rect.centery
+        eye = pygame.Rect(0, 0, eye_w, int(14 * S))
+        eye.center = (ex, ey)
+        pygame.draw.ellipse(layer, ACCENT_ORANGE, eye, width=max(1, int(2 * S)))
+        _aa_circle(layer, (ex, ey), int(3.4 * S), ACCENT_ORANGE)
+
+    def _draw_wb_prompt(self, layer, S) -> None:
+        """Right card: the focusable "Describe your portal…" floating input card."""
+        fld = self._wb_prompt_rect
+        if not fld:
+            return
+        # Floating inset card: secondary surface, soft inner shadow at the top
+        # edge, thin soft border. Reads as recessed writing space, not a flat box.
+        rad = int(_BTN_CORNER * S)
+        _aa_round_rect(layer, fld, GOLD_RIM_SOFT, rad)              # soft border
+        bw = max(1, int(1 * S))
+        _aa_round_rect(layer, fld.inflate(-2 * bw, -2 * bw), PANEL_SURFACE_2,
+                       max(1, rad - bw))
+        # Faint top inner shadow → recessed feel.
+        ish = pygame.Surface((fld.w - 4 * bw, int(7 * S)), pygame.SRCALPHA)
+        ish.fill((0, 0, 0, 14))
+        ish = _blur_down_up(ish, max(2, int(4 * S)))
+        layer.blit(ish, (fld.x + 2 * bw, fld.y + bw))
+        if self._wb_focused:                # orange focus ring while taking keys
+            pygame.draw.rect(layer, ACCENT_ORANGE, fld, width=max(1, int(2 * S)),
+                             border_radius=rad)
+        if self._wb_prompt:
+            shown, color = self._wb_prompt + ("|" if self._wb_focused else ""), INK
+        elif self._wb_focused:
+            shown, color = "|", ACCENT_ORANGE
+        else:
+            shown, color = "Describe your portal…", INK_SOFT
+        self._draw_wrapped(layer, shown, fld, color, self.fnt_hint, S)
+
+    def _draw_wb_left(self, layer, S) -> None:
+        """Left card: a static explainer — what World Builder is + how to write a
+        good prompt. No controls (Send + Save live on the right card)."""
+        lp = self._wb_left_panel
+        if not lp:
+            return
+        body = (
+            "Portal Builder turns a sentence into objects inside your grid room.\n\n"
+            "Describe a scene with positions and colours, then press Send to "
+            "preview it on the grid. Press Save to keep it as its own world.\n\n"
+            "Try: “a glowing red sphere back-left, a tall pink cylinder near the "
+            "glass, a blue cube floating high in the centre.”\n\n"
+            "Words it understands: back / front (near the glass), left / right, "
+            "high / low, centre — and colours like red, gold or blue."
+        )
+        top = lp.top + int(112 * S)
+        rect = pygame.Rect(lp.x + int(22 * S), top,
+                           lp.w - int(44 * S), lp.bottom - int(24 * S) - top)
+        self._draw_wrapped_para(layer, body, rect, INK_SOFT, self.fnt_hint, S)
+
+    def _draw_wb_actions(self, layer, S) -> None:
+        """Right card: Restart → Send → Preview → Save World stacked at the panel bottom."""
+        btn_rad = int(_BTN_CORNER * S)
+        if "wb_restart" in self._buttons:
+            r = self._buttons["wb_restart"]
+            self._draw_btn(layer, r, "Restart", "secondary", "sm", dark=False, key="wb_restart")
+        if "wb_send" in self._buttons:
+            r = self._buttons["wb_send"]
+            _aa_round_rect(layer, r.move(0, int(4 * S)), (0, 0, 0, 72), btn_rad)
+            self._draw_btn(layer, r, "Send", "accent", "lg", dark=False, key="wb_send")
+        if "wb_preview" in self._buttons:
+            # Preview: white card with gold rim + eye glyph (same visual style as
+            # before, now positioned inside the panel between Send and Save).
+            r = self._buttons["wb_preview"]
+            _aa_round_rect(layer, r.move(0, int(4 * S)), (0, 0, 0, 72), btn_rad)
+            _premium_card(layer, r, S, radius=_BTN_CORNER, glow_alpha=0, phase="front",
+                          shadow_alpha=0, shadow_blur=0, shadow_dy=0)
+            self._draw_eye_glyph(layer, r, S)
+            _text_shadow(layer, "Preview", self.fnt_small, INK,
+                         (r.centerx + int(14 * S), r.centery), S)
+        if "wb_save" in self._buttons:
+            r = self._buttons["wb_save"]
+            _aa_round_rect(layer, r.move(0, int(4 * S)), (0, 0, 0, 72), btn_rad)
+            self._draw_btn(layer, r, "Save World", "primary", "lg", dark=False,
+                           key="wb_save")
 
     # ── World Builder stage ────────────────────────────────────────────────────────
 
@@ -962,8 +1788,10 @@ class DemoOverlay:
         lp, rp = self._wb_left_panel, self._wb_right_panel
         region_left  = (lp.right if lp else int(72 * S)) + inner
         region_right = (rp.left if rp else self.w - int(72 * S)) - inner
-        top = self._tabbar.bottom + int(34 * S)
-        bottom = self.h - self._tabbar.y - int(24 * S)
+        top = self._tabbar.bottom + int(14 * S)
+        # Bottom boundary: above the bottom bar (when present), otherwise symmetric.
+        bb = getattr(self, "_bottombar", None)
+        bottom = (bb.top - int(12 * S)) if bb else (self.h - self._tabbar.y - int(12 * S))
         region_w = max(int(120 * S), region_right - region_left)
         region_h = max(int(80 * S), bottom - top)
         rcx, rcy = (region_left + region_right) / 2, (top + bottom) / 2
@@ -982,17 +1810,35 @@ class DemoOverlay:
             return (int(ox + gx * u - gz * v * ca),
                     int(oy - gy * u + gz * v * sa))
 
-        GRID = (150, 153, 163)                      # darkened interior grid lines
-        EDGE = (120, 123, 132)                      # receding edges + front frame
-        WALL = (20, 20, 26)                         # back-wall border (the focus)
-        TICK = (38, 38, 46)                         # X / Y square numbers
-        DEEP = GREY_TEXT_DIM                        # depth square numbers (subtle)
+        GRID = GRID_LINE                            # very subtle interior grid lines
+        EDGE = CUBE_EDGE                            # soft receding edges + front frame
+        WALL = CUBE_EDGE_KEY                        # soft key edges (back / perimeters)
+        NUM  = INK_SOFT                             # muted square numbers (elegant)
 
         def gline(a, b, color, width=1):
             pygame.draw.line(layer, color, a, b, width)
 
         def gaaline(a, b, color):
             pygame.draw.aaline(layer, color, a, b)
+
+        # ── Floating depth: a warm radial ground light + a soft contact shadow
+        # BENEATH the cube, so it reads as elevated above the warm page (static).
+        foot_w = D * (u + v * ca)                   # screen footprint width
+        fcx = (P(0, 0, 0)[0] + P(D, 0, 0)[0] + P(D, 0, D)[0] + P(0, 0, D)[0]) / 4
+        fcy = (P(0, 0, 0)[1] + P(D, 0, 0)[1] + P(D, 0, D)[1] + P(0, 0, D)[1]) / 4
+        _radial_glow(layer, fcx, fcy + foot_w * 0.10, foot_w * 0.82, foot_w * 0.34,
+                     (255, 224, 150), 70)           # warm ground light
+        # Soft contact shadow spread across the cube's WHOLE base footprint (was a
+        # tight central blob) so the cube reads as grounded along its full bottom.
+        _radial_glow(layer, fcx, fcy + foot_w * 0.13, foot_w * 0.70, foot_w * 0.22,
+                     (74, 62, 48), 90)              # soft contact shadow
+
+        # ── Solid white-ish faces so the cube is a bright object, not a wireframe.
+        def face(pts, color):
+            pygame.draw.polygon(layer, color, [P(*p) for p in pts])
+        face([(0, 0, 0), (D, 0, 0), (D, D, 0), (0, D, 0)], PANEL_SURFACE)     # back (brightest)
+        face([(0, 0, 0), (0, D, 0), (0, D, D), (0, 0, D)], (243, 240, 234))   # left (in shade)
+        face([(0, 0, 0), (D, 0, 0), (D, 0, D), (0, 0, D)], (250, 247, 241))   # floor (warm-lit)
 
         # Floor grid (depth cue) — receding down-left at 30°.
         for i in range(D + 1):
@@ -1007,37 +1853,95 @@ class DemoOverlay:
             gaaline(P(i, 0, 0), P(i, D, 0), GRID)            # vertical
             gaaline(P(0, i, 0), P(D, i, 0), GRID)            # horizontal
 
-        # Four receding edges + the front opening frame ("the glass").
+        # Four receding edges + the front opening frame ("the glass") — soft.
         for gx, gy in ((0, 0), (D, 0), (0, D), (D, D)):
             gline(P(gx, gy, 0), P(gx, gy, D), EDGE, 1)
         pygame.draw.lines(layer, EDGE, True,
                           [P(0, 0, D), P(D, 0, D), P(D, D, D), P(0, D, D)], 1)
-        # Back-wall border — brightest line; this rectangle IS the world.
+        # Perimeters — a soft warm key edge (NOT thick black); the back wall is
+        # the defining rectangle, the left wall + floor share the same soft tone.
+        wlw = max(1, int(1.5 * S))
         pygame.draw.lines(layer, WALL, True,
-                          [P(0, 0, 0), P(D, 0, 0), P(D, D, 0), P(0, D, 0)],
-                          max(2, int(2 * S)))
-        # Left-wall + floor perimeters — darkened to the SAME back-wall shade so
-        # all three visible faces share a consistent dark outline.
-        wlw = max(2, int(2 * S))
+                          [P(0, 0, 0), P(D, 0, 0), P(D, D, 0), P(0, D, 0)], wlw)
         pygame.draw.lines(layer, WALL, True,
                           [P(0, 0, 0), P(0, D, 0), P(0, D, D), P(0, 0, D)], wlw)
         pygame.draw.lines(layer, WALL, True,
                           [P(0, 0, 0), P(D, 0, 0), P(D, 0, D), P(0, 0, D)], wlw)
 
         # ── Dimensions, centred INSIDE the squares (1..D), sharing square 1 ─────
-        # X (width): centred in each bottom-row square. Square c spans points
-        # [c-1,c], so its centre is at c-0.5; the bottom row centre-height is 0.5.
+        # Muted so the grid feels elegant, not technical.
         for c in range(1, D + 1):
-            _text_shadow(layer, str(c), self.fnt_small, TICK, P(c - 0.5, 0.5, 0), S)
-        # Y (height): centred in each left-column square; skip 1 — the bottom-left
-        # square already carries the shared "1".
+            _text_shadow(layer, str(c), self.fnt_small, NUM, P(c - 0.5, 0.5, 0), S)
         for r in range(2, D + 1):
-            _text_shadow(layer, str(r), self.fnt_small, TICK, P(0.5, r - 0.5, 0), S)
-        # Depth (z): mapped to the BOTTOM ROW of the LEFT wall (gx = 0), centred
-        # in each bottom-row square, receding down-left along the wall. Drawn as
-        # dark as the back-wall border (WALL), not the old subtle grey.
+            _text_shadow(layer, str(r), self.fnt_small, NUM, P(0.5, r - 0.5, 0), S)
+        # Depth labels: 1=near glass, D=back wall — all three axes share cube 1 at
+        # the front-bottom-left corner of the canvas box.
         for d in range(1, D + 1):
-            _text_shadow(layer, str(d), self.fnt_small, WALL, P(0, 0.5, d - 0.5), S)
+            _text_shadow(layer, str(d), self.fnt_small, NUM, P(0, 0.5, d - 0.5), S)
+
+        # ── Previewed objects from the last Send (transient; not yet saved) ─────
+        # The placeable coord system is CENTRED (gx,gy ∈ [-D/2..D/2], gz ∈ [0..D]
+        # with 0 = glass), while this oblique canvas addresses a CORNER-origin cube
+        # (0..D on every axis, gz = 0 at the back wall). Convert, then paint back
+        # (far) → front (near) so nearer objects overlap farther ones correctly.
+        # Fall back to the scratch world.json when no in-app Send has been run yet
+        # (e.g. objects placed via the CLI or /world-builder-live skill).
+        objs = self._wb_preview_objects
+        if not objs:
+            try:
+                scratch = json.loads(self._grid_room_path().read_text())
+                objs = scratch.get("assets", {}).get("placeable_objects", []) or []
+            except Exception:
+                objs = []
+        if objs:
+            items = []
+            for o in objs:
+                try:
+                    gx, gy, gz = o["grid_position"]
+                except (KeyError, TypeError, ValueError):
+                    continue
+                # gx/gy: centred [-D/2..D/2] → corner-origin [0..D] for P().
+                # gz: engine and canvas share the same convention (0=glass, D=back wall),
+                # so no flip — just pass gz directly. Sort descending so back wall draws first.
+                items.append((gz, gx + D / 2.0, gy + D / 2.0, o))
+            items.sort(key=lambda t: t[0], reverse=True)   # back wall (gz≈D) drawn first
+            for gz_val, cgx, cgy, o in items:
+                self._draw_canvas_object(layer, P, u, cgx, cgy, gz_val, o, S)
+
+    def _draw_canvas_object(self, layer, P, u, cgx, cgy, cgz, obj, S) -> None:
+        """Blit a pre-rendered oblique mesh sprite onto the canvas.
+
+        Geometry is rendered once by UI.canvas_mesh_renderer (same 30° oblique
+        constants as P()) then cached — this method is just glow + blit, no
+        per-frame polygon work.  P(0,0,0) sits at the sprite's midpoint, so
+        ``get_rect(center=P(cgx,cgy,cgz))`` aligns it correctly."""
+        r, g, b = obj.get("color", (1.0, 1.0, 1.0))
+        col = (int(max(0.0, min(1.0, r)) * 255),
+               int(max(0.0, min(1.0, g)) * 255),
+               int(max(0.0, min(1.0, b)) * 255))
+        try:
+            scale = float(obj.get("scale", 1.0))
+        except (TypeError, ValueError):
+            scale = 1.0
+        hs    = max(0.05, min(scale, 4.0)) * 0.5
+        model = obj.get("model", "builtin:sphere")
+        px, py = P(cgx, cgy, cgz)
+
+        # Emissive glow halo — drawn first so the mesh sits on top of it.
+        if bool(obj.get("emissive", True)):
+            gl_r = max(4, int(hs * u * 1.8))
+            gl   = pygame.Surface((gl_r * 4, gl_r * 4), pygame.SRCALPHA)
+            pygame.draw.circle(gl, (*col, 88), (gl_r * 2, gl_r * 2), gl_r * 2)
+            layer.blit(_blur_down_up(gl, max(2, int(4 * S))),
+                       (int(px - gl_r * 2), int(py - gl_r * 2)))
+
+        # Blit cached pre-rendered sprite.
+        try:
+            from UI.canvas_mesh_renderer import render_object
+        except ImportError:
+            from canvas_mesh_renderer import render_object
+        sprite = render_object(model, col, hs, u)
+        layer.blit(sprite, sprite.get_rect(center=(int(px), int(py))))
 
     # ── GL bridge ─────────────────────────────────────────────────────────────────
 

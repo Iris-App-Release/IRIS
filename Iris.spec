@@ -3,7 +3,7 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = [('assets', 'assets'), ('worlds', 'worlds'), ('shaders', 'shaders'), ('models', 'models')]
 binaries = []
-hiddenimports = ['UI.demo_overlay', 'Worlds.world_runtime', 'Worlds.world_loader', 'mediapipe', 'mediapipe.python.solutions', 'mediapipe.tasks.python', 'mediapipe.tasks.python.vision', 'OpenGL', 'OpenGL.GL', 'OpenGL.GLU', 'pygame', 'cv2', 'objc', 'Foundation', 'AVFoundation']
+hiddenimports = ['UI.demo_overlay', 'UI.world_builder_api', 'Worlds.world_runtime', 'Worlds.world_loader', 'Worlds.placeable', 'mediapipe', 'mediapipe.python.solutions', 'mediapipe.tasks.python', 'mediapipe.tasks.python.vision', 'OpenGL', 'OpenGL.GL', 'OpenGL.GLU', 'pygame', 'cv2', 'objc', 'Foundation', 'AVFoundation']
 tmp_ret = collect_all('mediapipe')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('pygame')
@@ -23,6 +23,17 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 for _pyobjc_pkg in ('objc', 'Foundation', 'AVFoundation'):
     tmp_ret = collect_all(_pyobjc_pkg)
     datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
+# World Builder Claude call. The anthropic SDK is imported LAZILY inside
+# UI/world_builder_api.generate_world_objects (try/except ImportError → []), so
+# PyInstaller's static analysis never sees it. Without collect_all the frozen app
+# would silently fall back to "no objects generated" even with a valid API key.
+# Optional dependency: guarded so a source tree without it still builds.
+try:
+    tmp_ret = collect_all('anthropic')
+    datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+except Exception:
+    pass
 
 
 a = Analysis(

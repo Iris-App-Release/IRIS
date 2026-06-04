@@ -123,13 +123,13 @@ ICON_ARGS=()
     "${ICON_ARGS[@]}" \
     \
     --add-data "$ROOT/assets:assets" \
-    --add-data "$ROOT/worlds:worlds" \
+    --add-data "$ROOT/portals:portals" \
     --add-data "$ROOT/shaders:shaders" \
     --add-data "$ROOT/models:models" \
     \
     --hidden-import "UI.demo_overlay" \
-    --hidden-import "Worlds.world_runtime" \
-    --hidden-import "Worlds.world_loader" \
+    --hidden-import "Portals.portal_runtime" \
+    --hidden-import "Portals.portal_loader" \
     --hidden-import "mediapipe" \
     --hidden-import "mediapipe.python.solutions" \
     --hidden-import "mediapipe.tasks.python" \

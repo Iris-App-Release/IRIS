@@ -15,7 +15,7 @@ the engine itself polls:
                                camera) / resume
     ~/.parallax_icons_off      hide the orbital application icons only
     ~/.iris/daemon.pid         PID of the detached wallpaper daemon
-    ~/.iris/preferences.json   user preferences (incl. the active "world")
+    ~/.iris/preferences.json   user preferences (incl. the active "portal")
 
 Commands:
     status                 show daemon / pause / icons / active-world state
@@ -71,13 +71,13 @@ def _daemon_pid() -> int | None:
         return None
 
 
-def _available_worlds() -> list[str]:
+def _available_portals() -> list[str]:
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
     try:
-        from Worlds.world_runtime import resolve_worlds_dir
-        from Worlds.world_loader import WorldLoader
-        return WorldLoader(resolve_worlds_dir(ROOT)).list_available_worlds() or ["earth"]
+        from Portals.portal_runtime import resolve_portals_dir
+        from Portals.portal_loader import PortalLoader
+        return WorldLoader(resolve_worlds_dir(ROOT)).list_available_portals() or ["earth"]
     except Exception:
         return ["earth"]
 
@@ -87,11 +87,11 @@ def cmd_status(_args) -> int:
     pid = _daemon_pid()
     paused = TRACKING_OFF_FLAG.exists()
     icons = not ICONS_OFF_FLAG.exists()
-    world = _read_prefs().get("world", "earth")
+    world = _read_prefs().get("portal", "earth")
     print(f"daemon : {'running (pid %d)' % pid if pid else 'not running'}")
     print(f"state  : {'paused' if paused else 'active'}")
     print(f"icons  : {'on' if icons else 'off'}")
-    print(f"world  : {world}   (available: {', '.join(_available_worlds())})")
+    print(f"world  : {world}   (available: {', '.join(_available_portals())})")
     return 0
 
 
@@ -155,17 +155,17 @@ def cmd_icons(args) -> int:
     return 0
 
 
-def cmd_world(args) -> int:
-    worlds = _available_worlds()
+def cmd_portal(args) -> int:
+    worlds = _available_portals()
     if not args:
-        active = _read_prefs().get("world", "earth")
+        active = _read_prefs().get("portal", "earth")
         for w in worlds:
             print(f"  {'* ' if w == active else '  '}{w}")
         return 0
     name = args[0]
     if name not in worlds:
         print(f"unknown world '{name}'. available: {', '.join(worlds)}"); return 1
-    _write_pref("world", name)
+    _write_pref("portal", name)
     print(f"world set to '{name}' (the running engine picks this up live)")
     return 0
 
@@ -180,7 +180,7 @@ def cmd_log(_args) -> int:
 COMMANDS = {
     "status": cmd_status, "start": cmd_start, "stop": cmd_stop, "restart": cmd_restart,
     "pause": cmd_pause, "resume": cmd_resume, "toggle": cmd_toggle,
-    "icons": cmd_icons, "world": cmd_world, "log": cmd_log,
+    "icons": cmd_icons, "portal": cmd_world, "log": cmd_log,
 }
 
 

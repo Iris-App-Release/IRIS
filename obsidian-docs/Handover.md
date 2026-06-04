@@ -14,7 +14,7 @@ ww
 
 ## 1. Project Overview
 
-**IRIS** (internal alias: "Parallax Wall") is a macOS wallpaper app that creates a real-time fish-tank VR illusion. A webcam tracks the user's head position; a geometrically-correct off-axis OpenGL frustum re-renders a 3D world (currently: Earth or a giant eye) so the monitor appears to be a window into actual 3D space. The app ships as a signed, drag-to-install `.app` / `.dmg` built from Python (PyInstaller). It runs in two modes: an interactive onboarding demo with a floating glass HUD, and an always-on click-through wallpaper daemon.
+**IRIS** (internal alias: "Parallax Wall") is a macOS wallpaper app that creates a real-time fish-tank VR illusion. A webcam tracks the user's head position; a geometrically correct off-axis OpenGL frustum re-renders a 3D world (currently: Earth or a giant eye) so the monitor appears to be a window into actual 3D space. The app ships as a signed, drag-to-install `.app` / `.dmg` built from Python (PyInstaller). It runs in two modes: an interactive onboarding demo with a floating glass HUD, and an always-on click-through wallpaper daemon.
 
 **End goal:** A polished, shippable macOS ambient experience — multiple swappable worlds, robust camera permission flow, a reliable build pipeline, and eventually Developer ID signing for Gatekeeper-clean distribution.
 

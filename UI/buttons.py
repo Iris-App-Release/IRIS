@@ -57,6 +57,8 @@ LIGHT = {
     "ring":                 (0xB3, 0xB3, 0xB3),   # oklch(.708 0 0)   focus ring
     "destructive":          (0xD3, 0x2F, 0x2F),   # oklch(.577 .245 27.3) red
     "destructive_foreground": (0xFF, 0xFF, 0xFF),
+    "accent":               (0xEC, 0xA8, 0x1C),   # highlight orange (#ECA81C) — CTA / active tab
+    "accent_foreground":    (0xFF, 0xFF, 0xFF),   # white text on orange
 }
 
 DARK = {
@@ -72,6 +74,8 @@ DARK = {
     "ring":                 (0x8E, 0x8E, 0x8E),   # oklch(.556 0 0)   focus ring
     "destructive":          (0xC8, 0x5A, 0x5A),   # oklch(.704 .191 22.2) muted red
     "destructive_foreground": (0xFF, 0xFF, 0xFF),
+    "accent":               (0xEC, 0xA8, 0x1C),   # highlight orange — same accent both themes
+    "accent_foreground":    (0xFF, 0xFF, 0xFF),
 }
 
 # ── Frozen design tokens ──────────────────────────────────────────────────────
@@ -220,7 +224,7 @@ class Button:
         "instant hover" lesson). Set False for literal 0.15 s spec behaviour.
     """
 
-    VARIANTS = ("primary", "secondary", "destructive", "muted")
+    VARIANTS = ("primary", "secondary", "destructive", "muted", "accent")
 
     def __init__(self, rect, label: str, variant: str = "primary",
                  size: str = "md", dark: bool = False, on_click=None,
@@ -362,6 +366,14 @@ class Button:
             fill = _lerp(base, darken(base, 0.08), h)       # hover: slightly darker
             fill = _lerp(fill, darken(base, 0.16), a)       # active: darker still
             return fill, p["destructive_foreground"], None, 0
+
+        if self.variant == "accent":
+            # Solid highlight-orange CTA — the single chromatic emphasis besides
+            # destructive. Hover lifts a touch lighter, press settles darker.
+            base = p["accent"]
+            fill = _lerp(base, lighten(base, 0.06), h)      # hover: +6 % lighter
+            fill = _lerp(fill, darken(base, 0.06), a)       # active: −6 % darker
+            return fill, p["accent_foreground"], None, 0
 
         # muted
         base = p["muted"]

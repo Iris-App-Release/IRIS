@@ -1,8 +1,8 @@
 ---
 title: Current Focus
 type: reference
-related: [known_issues, head-tracking, engine-loop-and-daemon, constraints, the-watcher, the-gem, productification, version-control, menu-bar-ui, grid-api-customization]
-last_updated: 2026-06-02
+related: [known_issues, head-tracking, engine-loop-and-daemon, constraints, the-watcher, the-gem, productification, version-control, menu-bar-ui, grid-api-customization, grid-creator-tool-plan, Claude-Interrupted]
+last_updated: 2026-06-03
 sources: [Tracking/face_tracker.py, Launcher/app_engine.py, Engine/renderer.py, Engine/bloom_postfx.py, Scripts/tools/gen_eye_textures.py]
 ---
 
@@ -10,6 +10,34 @@ sources: [Tracking/face_tracker.py, Launcher/app_engine.py, Engine/renderer.py, 
 
 What's actively being worked on right now. Keep this short — move durable
 conclusions into the relevant system page and bug records into [[known_issues]].
+
+## World Builder authoring UI — Phases 1–8 + UX revisions DONE (2026-06-03)
+
+Phases 1–6 (engine: placeable objects, transform, clamp, hot-reload, sim) done.
+Phase 7–8 (authoring UI) wired, then the **2026-06-03 UX revisions executed in full**
+([[Claude-Interrupted]] spec). The authoring flow is now two-step + unlimited:
+
+- **Send** (right card) runs the Claude call, holds the sanitized objects in a
+  transient `_wb_preview_objects`, draws them on the oblique **Canvas Cube**, and
+  mirrors them into the `grid_room` scratch `world.json` so the live **Preview**
+  shows them — all WITHOUT saving.
+- **Save** (right card, bottom) commits the previewed scene as a NEW
+  `Worlds/<slug>/world.json` (grid_room copy + prompt-derived name), rescans so it
+  joins the Worlds-tab cycle, and resets the scratch. grid_room stays blank scratch.
+- **Left card** = static "How It Works" explainer (usage line + Save removed).
+- **Unlimited for now:** `FREE_CUSTOMIZATION_LIMIT = math.inf` — gate, usage line and
+  upsell modal dropped from the flow; `Licensing/entitlement.py` scaffolding kept.
+- **Settings → Delete World:** user-world list (built-ins/grid_room never shown) →
+  "Are you sure?" Yes/No → safe `rmtree` (refuses built-ins + non-child paths) →
+  rescan + fall back to `earth` if the active world was deleted.
+
+No frozen modules touched (camera/shaders/physics, grid_divisions/grid_depth/
+enveloping all unchanged). New guard `Scripts/validation/sim_world_builder.py` pins
+the flow; **all 12 headless sims pass**; three new UI states render-verified.
+See [[grid-creator-tool-plan]] §7–8 ("as built — UX revision").
+
+**Next:** live GUI `/verify` pass — type a prompt, Send (eyeball Canvas + Preview
+objects + parallax), Save, cycle to the new world in the Worlds tab, Delete it.
 
 ## Grid worlds: Earth's zoom + parallax + anchored rim, and NO pan — DONE (2026-06-02, final)
 

@@ -1,19 +1,26 @@
 ---
 title: World Builder — Implementation Plan
 type: implementation-plan
-status: proposed (not started)
+status: in progress — Phases 1–8 done; pathline-verified + real-time enabled (2026-06-03). Live in-app Send needs a paid ANTHROPIC_API_KEY (productification); local dev/testing needs NONE — Claude authors via the CLI/skill `--objects` path.
 related: [grid-api-customization, productification, world-system, grid-room, constraints, design-decisions, ui-reorg-architecture, menu-bar-ui, headless-simulation]
-last_updated: 2026-06-02
+last_updated: 2026-06-03
 sources:
   - Worlds/world_runtime.py
   - Worlds/world_loader.py
   - Worlds/grid_room/world.json
+  - Worlds/placeable.py
   - Engine/renderer.py
   - Engine/camera_math.py
   - Launcher/app_engine.py
   - Scripts/validation/sim_envelop.py
-  - Licensing/entitlement.py (new)
-  - UI/world_builder_tab.py (new)
+  - Scripts/validation/sim_grid_api.py
+  - Scripts/validation/sim_world_builder.py (new — authoring-flow guard)
+  - Licensing/entitlement.py (new — freemium gate, currently unlimited)
+  - UI/world_builder_api.py (new — Claude authoring call + key resolution + diagnose())
+  - UI/demo_overlay.py (World Builder tab: prompt input + Send/Save + Delete)
+  - Scripts/world_builder_cli.py (new — terminal driver for the REAL pipeline; --objects bridge for key-free dev testing)
+  - .claude/skills/world-builder-live/SKILL.md (new — drives the CLI from a prompt)
+  - requirements.txt / Iris.spec (anthropic SDK now a wired dependency)
 ---
 
 # World Builder — Implementation Plan
@@ -35,6 +42,14 @@ You are implementing **World Builder**, a top-bar tab for user-customizing the G
 The grid is already a spatial stage drawn in world space; you are adding a `placeable_objects[]`
 array to `world.json`, a coordinate transform, a fixed-function draw loop, bounds
 clamping, hot-reload, and a headless sim. **You touch NO frozen module.** 
+
+**Status (2026-06-03):** Phases 1–8 are built; the live generate→preview→save→delete
+path works. The `anthropic` SDK is installed/bundled and the key is resolved from env
+**or** `~/.iris/anthropic_key`. **To test it yourself you need NO paid API key** — run
+`/world-builder-live` (or `/world-builder`): Claude writes the objects and
+`Scripts/world_builder_cli.py preview|save|delete --objects '<json>'` pushes them
+through the identical sanitize/save pipeline. The paid `ANTHROPIC_API_KEY` is only for
+the in-app Send button serving end users who have no Claude (a §10.7 cost decision).
 
 **Freemium model:** users get one free world customization; after that, a premium
 subscription upsell appears. Entitlements and free-use counter are tracked in a new
@@ -252,8 +267,148 @@ A creator (or Claude) must never be able to break the box or the engine:
 | **4. Validation/clamp** | Allowlist + clamps + count cap | `Engine/renderer.py` / small helper | Out-of-bounds, junk, and overflow inputs render safely. |
 | **5. Hot-reload** | Re-read `world.json` on its mtime change | `Worlds/world_runtime.py` `poll()` | Editing the JSON updates the scene live, no restart. |
 | **6. Headless sim** | `sim_grid_api.py` | `Scripts/validation/sim_grid_api.py` | Transform, clamping, frozen-invariance all asserted; **all 11 sims pass**. |
-| **7. World Builder tab + entitlement** | Top-bar UI tab; free-tier counter; upsell modal | `UI/world_builder_tab.py` (new), `Licensing/entitlement.py` (new), `Launcher/app_engine.py` (tab integration) | Tab toggles drawer; upsell appears on second save; entitlements checked at save time. |
-| **8. Authoring flow** | Documented Claude prompt + cell reference | this doc / a `creator-guide.md` | Claude reliably turns "glowing red sphere back-left" into a clamped, valid object via tab UI. |
+| **7. World Builder tab + entitlement** ✅ | Top-bar UI tab; free-tier counter; upsell modal | `UI/demo_overlay.py` (WB tab: right-panel prompt input, left-panel Save + usage line), `Licensing/entitlement.py` (new) | Tab shows the two gold panels; Save runs the gate; upsell modal appears once the free save is spent; entitlement checked at save time. |
+| **8. Authoring flow** ✅ | Claude prompt + cell reference wired into Save | `UI/world_builder_api.py` (new — `generate_world_objects`) | Save sends the prompt + grid context to Claude, parses the JSON array, re-validates via `sanitize_objects`, writes `assets.placeable_objects[]`; hot-reload (Phase 5) shows it live. |
+
+### Phase 7–8 — as built (2026-06-03)
+
+- **Panels.** The two golden-yellow side panels are now titled **Build Settings**
+  (left) and **World Builder** (right). The **right** panel holds the focusable
+  *"Describe your world…"* text input (`_wb_prompt`, ≤150 chars, word-wrapped,
+  navy focus ring, caret); the **left** panel holds the prompt advice, the
+  free-tier usage line (*"N of 1 customization used"*), and a large **Save**
+  button pinned to the bottom.
+- **Input.** Keystrokes route to the prompt only while it's focused (clicking it
+  focuses, clicking elsewhere/Esc blurs), so typing `q` no longer quits the app.
+  State lives in `demo_overlay._wb_*` — render stays signature-cached, no
+  per-frame allocation, and the usage count is cached in memory (no per-frame
+  disk read).
+- **Save pipeline** (`DemoOverlay._wb_save`): empty prompt → toast *"Describe
+  your world first"*; else entitlement gate (`EntitlementChecker`) → if spent,
+  the **World Builder Pro** upsell modal; else `generate_world_objects(prompt,
+  world_def)` → parse JSON array → **`sanitize_objects` (validate BEFORE write)**
+  → write `assets.placeable_objects[]` to `Worlds/grid_room/world.json` →
+  `record_customization_saved()` → clear prompt → toast. `world_runtime.poll()`
+  hot-reloads on the mtime change.
+- **Claude call** (`UI/world_builder_api.py`): reads `ANTHROPIC_API_KEY` (or
+  `IRIS_OPENAI_KEY`), model `claude-sonnet-4-6` (override `IRIS_WB_MODEL`),
+  system prompt cached (`cache_control: ephemeral`). System prompt pins the §3
+  cell convention and the `builtin:*` allowlist and forbids frozen fields. Any
+  failure (no key, no SDK, parse error) returns `[]` → a clear toast, never a
+  crash. Output is run through `sanitize_objects` inside the API *and* again at
+  the write site, so the on-disk write is provably clamped/allowlisted.
+- **Tests.** All 11 headless sims still pass (frozen-invariance held); an
+  end-to-end mocked-Claude save clamped an out-of-range cube to `[4,4,8]`,
+  dropped a non-allowlisted model, left `grid_divisions`/`grid_depth` untouched,
+  and restored the file clean.
+
+**Still open before §10 monetization:** `/verify` in a real GUI session (live
+parallax + anchored rim + 30 fps with a full object set), the 10-prompt
+reliability bake (§9.3), and a real upsell→payment wiring (the modal currently
+toasts *"payments coming soon"*). **Update 2026-06-03:** the real-time generation
+path itself is now enabled — `anthropic` SDK installed/bundled and key resolution
+extended to `~/.iris` (see the pathline-inspection subsection below). The live
+in-app Send now works as soon as a key is present; the open monetization item is
+choosing the API-cost channel (§10.7), not wiring the call. Dev testing needs no
+key (§8 key-free loop).
+
+### Phase 7–8 — UX revision, as built (2026-06-03) ✅
+
+The 2026-06-03 authoring-flow revisions ([[Claude-Interrupted]] spec) are **shipped**
+in `UI/demo_overlay.py` + `Licensing/entitlement.py`. No frozen modules touched;
+all 12 headless sims pass (new guard `Scripts/validation/sim_world_builder.py`).
+
+- **Send button** on the right card (`_wb_send`): runs `generate_world_objects`,
+  sanitizes, stores the result in the transient `_wb_preview_objects` (NOT saved),
+  bumps `_wb_preview_gen` so the cached surface invalidates, and mirrors the set
+  into the `grid_room` scratch `world.json` (`_write_scratch`).
+- **Send renders live** on the oblique **Canvas Cube** — `_draw_canvas_object`
+  paints each object (sphere→disc, cube→rounded square, cylinder→capsule) honouring
+  colour/scale/emissive, depth-sorted back→front via the centred→corner coord
+  convert (`cgx=gx+D/2, cgy=gy+D/2, cgz=D−gz`) — and in **Preview** (the scratch
+  write drives `world_runtime.poll()` hot-reload, no restart).
+- **Save** moved to the right card bottom (`_wb_save`): requires a preview, then
+  writes a NEW `Worlds/<slug>/world.json` (grid_room copy + prompt-derived name via
+  `_derive_world_name`/`_unique_world_slug`), rescans worlds so it joins the
+  Worlds-tab cycle, and resets the scratch. grid_room stays the blank scratch
+  (re-blanked on every World Builder tab entry).
+- **Left card** = static **"How It Works"** explainer only (`_draw_wb_left`); the
+  usage line + Save button were removed from it.
+- **Unlimited for now:** `FREE_CUSTOMIZATION_LIMIT = math.inf` → `can_save_customization()`
+  always True, `should_show_upsell()` always False. The gate call, usage line, and
+  upsell modal were removed from the flow; `Licensing/entitlement.py` scaffolding is
+  kept on disk so §10 monetization can be switched back on by setting a finite limit.
+- **Settings → Delete World** (`_delete_world`): the list (`_deletable_worlds`) shows
+  ONLY user worlds — built-ins `earth`/`gem`/`the_watcher` and the `grid_room` scratch
+  (`BUILTIN_WORLDS`) never appear. Picking one opens the *"Are you sure you want to
+  delete this?"* Yes/No modal; **Yes** `rmtree`s the dir (refusing any built-in and any
+  slug that doesn't resolve to a direct child of `Worlds/`), rescans, and falls back to
+  `earth` if the deleted world was active; **No** dismisses.
+
+### Phase 7–8 — pathline inspection + real-time enablement (2026-06-03) ✅
+
+A full end-to-end trace of the live authoring path (prompt → on-screen object)
+surfaced that the feature was **two gates short of real-time, not one**, and that
+**no paid API key is needed to test it on a dev machine**. Both are now resolved.
+
+**The live in-app path:**
+```
+DemoOverlay._wb_send()  (UI/demo_overlay.py)
+  → generate_world_objects(prompt, world_def)  (UI/world_builder_api.py)
+       GATE 1: resolve an API key      ─┐ both must pass or the call returns []
+       GATE 2: import anthropic (SDK)  ─┘ (HUD then toasts "No objects generated")
+       → client.messages.create(claude-sonnet-4-6, cached system prompt)
+       → _parse_json_objects() → sanitize_objects()   (Worlds/placeable.py)
+  → sanitize_objects() again (defense in depth)
+  → _write_scratch() → Worlds/grid_room/world.json
+  → world_runtime.poll() mtime hot-reload  → Canvas Cube + live Preview
+Save   → _wb_save()      → new Worlds/<slug>/world.json
+Delete → _delete_world() → rmtree (built-ins + path-escapes refused)
+```
+
+**Finding 1 — the `anthropic` SDK was never installed or bundled.** Even with a
+valid key, `generate_world_objects` hit `except ImportError: return []`, so the
+in-app Send silently produced nothing. *Fixed:* `anthropic` installed in `.venv`,
+pinned in `requirements.txt`, and added to `Iris.spec` (`hiddenimports` +
+`collect_all('anthropic')`, guarded) — the SDK is imported lazily inside a
+try/except, so without the spec entry PyInstaller would never see it and the
+frozen `.app` would fall back to "no objects" even with a key (same failure class
+as the pyobjc camera imports already documented in the spec).
+
+**Finding 2 — key resolution was env-only.** A Finder-launched `.app` does **not**
+inherit a shell's environment, so an `export ANTHROPIC_API_KEY=...` would never
+reach the shipped app. *Fixed:* `_resolve_api_key()` now tries, in order,
+`ANTHROPIC_API_KEY` → `IRIS_OPENAI_KEY` → `~/.iris/anthropic_key` (raw, one line)
+→ `~/.iris/config.json` (`{"anthropic_api_key": "..."}`). A new `diagnose()`
+reports both gates (`sdk_installed`, `key_present`, `key_source`, `ready`) with no
+network call, for tooling. The HUD's `[]`-on-any-failure contract is unchanged.
+
+**Finding 3 — you do NOT need a paid key to test locally.** The paid API call only
+exists so an *end user who has no Claude* can self-serve from the in-app Send
+button. For development the author already has Claude (this CLI/skill session), so
+the test loop routes Claude-authored objects through the **same** clamp/save/preview
+code via an `--objects` injection — identical on-disk result, zero API cost. See
+the new key-free dev loop in §8.
+
+**Tooling shipped for this:**
+- `Scripts/world_builder_cli.py` — terminal driver for the **real** pipeline
+  (`status / preview / save / list / use / delete / clear / selftest`). `preview`
+  = the Send button (writes the grid_room scratch + switches the active world so a
+  running app hot-reloads it live); `save` = Send+Save (commits a new
+  `Worlds/<slug>`); `delete` mirrors the Settings delete safety. `preview`/`save`
+  take `--objects '<json-array>'` to inject objects instead of calling Claude — the
+  key-free path. It imports `generate_world_objects`/`sanitize_objects` directly and
+  re-implements only the file/slug/pref semantics from `demo_overlay`, so it never
+  drifts from the math/safety layer.
+- `.claude/skills/world-builder-live/SKILL.md` — wraps the CLI; `/world-builder`
+  (manual hand-authoring, no API) is kept as the no-key sibling.
+
+**Tests (2026-06-03):** all **12** headless sims still green (frozen-invariance
+held); the CLI `selftest` passes the offline preview→save→delete data-plane in a
+temp tree; a real `save --objects`/`list`/`delete` cycle created, listed, and
+removed a user world and restored the grid_room scratch byte-identically. The only
+untested-on-this-machine leg is the live `client.messages.create` round-trip, which
+is gated purely on a key and is **not** required for the dev test loop.
 
 ### Phase 5 detail — hot-reload
 `WorldRuntime.poll()` currently only re-selects when the **prefs** mtime changes. Add a
@@ -291,6 +446,27 @@ Assert, headless (no GPU):
    (§3), infers grid cells, writes clamped, allowlisted objects into
    `assets.placeable_objects[]`.
 3. User clicks "Save"; the daemon **hot-reloads** (Phase 5) → objects appear instantly.
+
+**Two ways to author — and only one costs money:**
+
+| Mode | Who | Generator | API key? |
+|---|---|---|---|
+| **In-app Send** | end user (no Claude of their own) | `generate_world_objects` → real Claude call | **Yes** — paid `ANTHROPIC_API_KEY` (productification; see §10 COGS) |
+| **Dev / test loop** | the author (has Claude already) | Claude writes the objects JSON → `world_builder_cli --objects` | **No** |
+
+The two converge on the **same** sanitize → grid_room/scratch → save/delete code,
+so a scene authored in the dev loop is byte-identical to one the app would produce.
+This is why local testing needs no paid key (the 2026-06-03 finding).
+
+**Key-free dev/test loop (no API key):**
+1. User runs `/world-builder-live` (or `/world-builder`) and describes a scene.
+2. Claude (this session) writes the `placeable_objects` JSON, clamped to §3/`placeable.py`.
+3. Pipe it through the real pipeline:
+   - preview: `.venv/bin/python Scripts/world_builder_cli.py preview "<desc>" --objects '<json>'`
+     → writes the grid_room scratch + switches the active world → a running app **hot-reloads** it.
+   - save:    `… save "<desc>" --objects '<json>'` → new `Worlds/<slug>/world.json`.
+   - delete:  `… list` then `… delete <slug>` (user worlds only).
+4. `… status` reports both real-time gates; `… selftest` runs the offline data-plane.
 
 **Entitlement gate (freemium):**
 - On first save: allowed (free customization tracked in `~/.iris/licensing.json`).
@@ -427,6 +603,26 @@ Developer-ID signed + notarized.** No payment strategy matters before that. Sequ
 - **Subscription terms** — spell out what "World Builder Pro" unlocks; auto-renew clauses
   (App Store requirement); cancellation flow (Stripe/Paddle handle this, but surface it
   clearly in the app or a help page).
+
+### 10.7 Cost of goods — the Claude API bill (the key you didn't want to buy)
+
+The in-app **Send** button makes a real Claude call per generation, so every
+end-user customization has a marginal cost. That cost is **the developer's**, not
+the user's — which is exactly why a paid `ANTHROPIC_API_KEY` felt wrong to buy just
+to *test* (you don't: see the key-free dev loop in §8). For *shipping*, pick one:
+
+| Model | How | Trade-off |
+|---|---|---|
+| **Dev-funded key (proxy)** | App calls **your** backend; backend holds the key + meters/rate-limits per device | Cleanest UX (user does nothing); you eat COGS — Pro price must clear it. Needs a server. |
+| **BYO key (BYOK)** | User pastes their own Anthropic key into `~/.iris/anthropic_key` (already supported by `_resolve_api_key`) | Zero COGS to you; only appeals to users who already have a key (devs) — bad for mass market. |
+| **Hybrid** | Free tier = BYOK or N proxied/day; Pro = unlimited proxied | Matches §10.1 freemium; the proxy bill is bounded by the free cap. |
+
+Sizing note: the call is one short structured-output request with a **cached**
+system prompt (`cache_control: ephemeral` in `world_builder_api.py`) and
+`max_tokens=1500`, so per-generation cost is small — but it is **not zero**, and
+the §10.1 price ($4.99–7.99/mo) must stay above expected generations × unit cost.
+A finite `FREE_CUSTOMIZATION_LIMIT` (currently `math.inf`) is the lever that caps
+free-tier COGS; turn it on **with** whichever channel above ships.
 
 ---
 

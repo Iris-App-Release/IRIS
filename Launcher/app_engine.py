@@ -37,6 +37,17 @@ from pygame.locals import (
     DOUBLEBUF, OPENGL, NOFRAME, FULLSCREEN, QUIT,
     KEYDOWN, K_ESCAPE, K_q,
 )
+
+# P1.4 — Disable PyOpenGL's per-call glGetError in release builds.
+# Setting these flags BEFORE any from OpenGL.GL import propagates to every
+# subsequent OpenGL import (renderer.py, shader_loader.py) because the OpenGL
+# package caches the flag at import time.  In debug mode (IRIS_DEBUG=1) the
+# checks remain active for development validation.
+import OpenGL as _ogl
+if os.environ.get("IRIS_DEBUG", "0") != "1":
+    _ogl.ERROR_CHECKING = False
+    _ogl.ERROR_LOGGING  = False
+
 from OpenGL.GL  import *
 from OpenGL.GLU import gluPerspective, gluLookAt
 
@@ -300,6 +311,29 @@ def _hide_from_dock() -> None:
         print(f"[cocoa] hide-from-dock failed: {e}")
 
 
+def _window_is_occluded() -> bool:
+    """Return True when ALL NSApp windows have lost the Visible occlusion flag —
+    meaning the wallpaper is fully covered by other windows.
+
+    macOS sets NSWindowOcclusionStateVisible (bit 1) while any part of a window
+    is visible on screen.  When the wallpaper is entirely behind a full-screen
+    app the bit clears and we can safely skip rendering without any perceptible
+    effect.  The check is cheap (~1 µs): a single Cocoa property access per frame.
+
+    Returns False on non-macOS or if Cocoa is unavailable (safe default = render).
+    """
+    if not _HAVE_COCOA:
+        return False
+    _VISIBLE_BIT = 2   # NSWindowOcclusionStateVisible = 1 << 1
+    try:
+        for w in NSApp.windows():
+            if w.occlusionState() & _VISIBLE_BIT:
+                return False          # at least one window still visible
+        return True                   # all windows occluded
+    except Exception:
+        return False
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  Main
 # ══════════════════════════════════════════════════════════════════════════════
@@ -375,31 +409,37 @@ def main() -> None:
     except Exception:
         pass
 
-    # Scene
-    print("[main] Loading textures & compiling shaders…")
-    nebula = Nebula()
-    stars  = Stars()
-    earth  = Earth()
-    icons  = IconOrbit(debug=ICON_DEBUG)
-    print("[main] Scene assembled.")
+    # Scene (P1.1/P2.2 — lazy asset loading)
+    # Earth, Nebula, and Stars are now built on first use rather than at startup.
+    # This saves ~870 MB for non-Earth worlds (Grid Room, Gem, Watcher) and
+    # ~2 s of texture decode for any world that doesn't need the star background.
+    # Icons are kept eager (small, needed across multiple worlds; rescan is
+    # by-design always-on so the app icon list is current on world switch).
+    print("[main] Compiling shaders…")
+    nebula     = None   # lazy — built on first frame needing "stars" background
+    stars      = None   # lazy — built on first frame needing "stars" background
+    earth      = None   # lazy — built on first frame needing Earth mesh; async decode
+    _earth_failed = False   # True after a failed Earth build (skip retries)
+    icons      = IconOrbit(debug=ICON_DEBUG)
+    print("[main] Scene ready (Earth/Nebula/Stars load on demand).")
 
-    # ── World system (JSON-defined, live-switchable: Earth, The Watcher, …) ────
-    # The active world is read from ~/.iris/preferences.json and re-polled each
+    # ── Portal system (JSON-defined, live-switchable: Earth, The Watcher, …) ────
+    # The active portal is read from ~/.iris/preferences.json and re-polled each
     # frame, so switching takes effect live in the demo AND the wallpaper daemon.
-    # Camera/parallax are world-agnostic; only the drawn assets change.
-    from Worlds.world_runtime import WorldRuntime, resolve_worlds_dir
-    world = WorldRuntime(resolve_worlds_dir(_BUNDLE_BASE), PREFS_FILE)
+    # Camera/parallax are portal-agnostic; only the drawn assets change.
+    from Portals.portal_runtime import PortalRuntime, resolve_portals_dir
+    portal = PortalRuntime(resolve_portals_dir(_BUNDLE_BASE), PREFS_FILE)
     eye   = None   # The Watcher's eyeball — built lazily + guarded on first use,
                    # so an Earth-only session never touches the eye shader/texture.
     gem   = None   # The Gem — built lazily on first use, same guard pattern.
     room  = None   # The Grid Room — wireframe shadow-box, built lazily, same guard.
-    placeables = None  # World Builder placeable-object draw helper, built lazily.
+    placeables = None  # Portal Builder placeable-object draw helper, built lazily.
 
     # Live, mtime-cached metric calibration. Disabled by default, so half_h()→None
     # (camera_math uses the frozen WINDOW_HALF_H) and shift_scale→1.0: the camera
     # pipeline is byte-identical to before unless the user opts in.
     calib = calib_mod.CalibrationRuntime(CALIBRATION_FILE)
-    print(f"[main] World system ready — active '{world.name}', available {world.available()}")
+    print(f"[main] Portal system ready — active '{portal.name}', available {portal.available()}")
 
     # Bloom post-processing has been removed (user decision, 2026-06-01). The
     # scene now renders straight to the (multisampled) default framebuffer — no
@@ -460,6 +500,31 @@ def main() -> None:
     last  = t0
     last_state_write = 0.0  # throttles the icons-app state export (see below)
     window_visible = True   # Cocoa orderOut/orderFront mirrors this
+
+    # P2.1 — occlusion tracking (wallpaper mode only)
+    _was_occluded = False
+
+    # P1.3 — icons-overlay consumer guard.
+    # The 30 Hz state-file write is only meaningful when the separate
+    # orbital_icons.py Cocoa process is actually running AND the active world
+    # shows icons. We cache a pgrep check every 5 s so the write is skipped
+    # entirely when the overlay is absent (the common case for users without the
+    # decorative desktop-icon layer).
+    _icons_consumer_present    = False
+    _icons_consumer_last_check = 0.0
+    _ICONS_CONSUMER_CHECK_INTERVAL = 5.0
+
+    def _check_icons_consumer() -> bool:
+        """Return True if orbital_icons.py is currently running (pgrep, cached)."""
+        try:
+            import subprocess
+            r = subprocess.run(
+                ["pgrep", "-f", "orbital_icons"],
+                capture_output=True, timeout=0.2,
+            )
+            return r.returncode == 0
+        except Exception:
+            return False
 
     def _set_window_visible(visible: bool) -> None:
         """Show/hide the wallpaper window via Cocoa so the real macOS
@@ -596,6 +661,27 @@ def main() -> None:
                     window_visible = True
                     print("[main] Engine resumed")
 
+        # ── P2.1 — Occlusion-aware render pause (wallpaper mode only) ───────────
+        # When every NSApp window has lost the NSWindowOcclusionStateVisible flag
+        # the wallpaper is entirely behind other windows and rendering is wasted
+        # GPU/compositor work.  We pause and poll cheaply until we become visible
+        # again — instant recovery with no reload.  Only active in wallpaper mode
+        # so the interactive demo (which the user is watching) is never throttled.
+        # demo/Desktop-Mode: desktop_active flag gates us into the wallpaper path;
+        # we still check occlusion there so the process-internal wallpaper also
+        # pauses when fully covered (same behaviour as the standalone daemon).
+        if DISPLAY_MODE in ("wallpaper",) or desktop_active:
+            if window_visible and _window_is_occluded():
+                if not _was_occluded:
+                    _was_occluded = True
+                    print("[main] Wallpaper occluded — pausing render")
+                pygame.event.pump()          # keep SDL alive for un-occlude events
+                time.sleep(0.033)            # ~30 Hz poll — near-zero CPU cost
+                continue
+            if _was_occluded:
+                _was_occluded = False
+                print("[main] Wallpaper visible — resuming render")
+
         # ── Camera update — three INDEPENDENT, BLENDED viewing components ──────
         # Head input SOURCE differs by mode (the camera MATH below is identical):
         # before camera grant the demo feeds a scripted idle path into the very
@@ -673,7 +759,7 @@ def main() -> None:
         # bezel anchor, but the rotational look is held at ZERO. (Tried capping the pan;
         # any non-zero pan still shears the anchored rim — reverted 2026-06-02.) Object /
         # sphere worlds are untouched → byte-identical.
-        if world.enveloping:
+        if portal.enveloping:
             yaw_target = 0.0
             pitch_tgt  = 0.0
         pitch_tgt   =  max(-PITCH_PAN_MAX_RAD, min(PITCH_PAN_MAX_RAD, pitch_tgt))
@@ -681,38 +767,36 @@ def main() -> None:
         cam_pitch  += cam_alpha * (pitch_tgt  - cam_pitch)
 
         # ── Export state for the separate icons_overlay Cocoa app ─────────────
-        # Since the orbital icons in the wallpaper mode's GL engine are purely
-        # decorative/non-interactive, the clickable macOS desktop icons are
-        # provided by a separate Cocoa process (orbital_icons.py). We export the
-        # current smoothed camera state so that process can align its 2-D
-        # projection with the 3-D Earth perfectly.
-        # Throttled to ≤30 Hz: the head input itself updates at only ~30 Hz, so a
-        # faster write just re-serialises identical values to disk in the render
-        # thread (a synchronous filesystem write every frame was ~55 µs each and a
-        # source of hitches). The separate icons app reads the latest snapshot, so
-        # 30 Hz is ample for alignment.
-        if now - last_state_write >= (1.0 / 30.0):
-            last_state_write = now
-            try:
-                state_data = {
-                    "hx": float(hx), "hy": float(hy), "hz": float(hz),
-                    "cam_x": float(cam_x), "cam_y": float(cam_y), "cam_z": float(cam_z),
-                    "cam_yaw": float(cam_yaw), "cam_pitch": float(cam_pitch),
-                    "t_s": float(t_s),
-                    # Effective window half-height (frozen value unless the user
-                    # enabled metric calibration). Exported so the separate
-                    # orbital_icons.py process can match the GL engine's framing;
-                    # it currently assumes the frozen value, so under calibration
-                    # the 2-D desktop icons may drift until they read this.
-                    "win_half_h": float(win_half_h if win_half_h is not None else om.WINDOW_HALF_H),
-                    "timestamp_ms": int(time.time() * 1000)
-                }
-                EARTH_STATE_FILE.write_text(json.dumps(state_data))
-            except Exception:
-                pass
+        # The orbital_icons.py Cocoa process reads this file to align its 2-D
+        # icon projection with the live 3-D Earth position.  We only write when:
+        #   1. The active world actually shows icons (Earth world; not Grid Room etc.)
+        #   2. Icons are not explicitly disabled via the flag file.
+        #   3. The overlay process is detected as running (cached pgrep, 5 s TTL).
+        # Without these guards the engine wrote 30 Hz to disk continuously even when
+        # the overlay was never installed — ~30 SSD writes/s for nothing (P1.3).
+        if portal.show_icons and not ICONS_OFF_FLAG.exists():
+            # Refresh the consumer-presence cache every 5 s
+            if now - _icons_consumer_last_check >= _ICONS_CONSUMER_CHECK_INTERVAL:
+                _icons_consumer_present    = _check_icons_consumer()
+                _icons_consumer_last_check = now
+            if _icons_consumer_present and now - last_state_write >= (1.0 / 30.0):
+                last_state_write = now
+                try:
+                    state_data = {
+                        "hx": float(hx), "hy": float(hy), "hz": float(hz),
+                        "cam_x": float(cam_x), "cam_y": float(cam_y), "cam_z": float(cam_z),
+                        "cam_yaw": float(cam_yaw), "cam_pitch": float(cam_pitch),
+                        "t_s": float(t_s),
+                        "win_half_h": float(win_half_h if win_half_h is not None else om.WINDOW_HALF_H),
+                        "timestamp_ms": int(time.time() * 1000)
+                    }
+                    EARTH_STATE_FILE.write_text(json.dumps(state_data))
+                except Exception:
+                    pass
 
-        # Animate
-        earth.update(dt)
+        # Animate (guard earth — it is now built lazily)
+        if earth is not None:
+            earth.update(dt)
         icons.update(dt)
         if eye is not None:
             eye.update(dt, hx, hy)
@@ -720,7 +804,36 @@ def main() -> None:
             gem.update(dt)
 
         # Live world switch (cheap, mtime-cached; works in demo + daemon).
-        world.poll()
+        # Capture return value so we can release assets when the world changes.
+        portal_changed = portal.poll()
+
+        # P1.1 — release unused GPU assets when the world switches.
+        # If the new world neither needs the star background nor the Earth mesh,
+        # destroy those objects so VRAM and RSS are freed promptly.  The lazy
+        # guards below rebuild them if the user switches back.
+        if portal_changed:
+            _bg_needed = (portal.background == "stars")
+            if not _bg_needed:
+                if nebula is not None:
+                    try:   nebula.destroy()
+                    except Exception: pass
+                    nebula = None
+                if stars is not None:
+                    try:   stars.destroy()
+                    except Exception: pass
+                    stars = None
+            _earth_mesh_needed = portal.primary_mesh not in ("room", "eye", "gem")
+            if not _earth_mesh_needed:
+                _can_release = (
+                    (portal.primary_mesh == "room"  and room is not None)  or
+                    (portal.primary_mesh == "gem"   and gem  is not None)  or
+                    (portal.primary_mesh == "eye"   and eye  is not None)
+                )
+                if _can_release and earth is not None:
+                    try:   earth.destroy()
+                    except Exception: pass
+                    earth = None
+                    _earth_failed = False   # allow rebuild if user switches back
 
         dpi_scale = max(1.0, W_gl / max(1, W))
 
@@ -745,7 +858,7 @@ def main() -> None:
 
         # Per-world clear colour: Earth keeps its near-black blue; The Watcher is
         # a pure black void. (Identical value for Earth → no behavioural change.)
-        cc = world.clear_color
+        cc = portal.clear_color
         glClearColor(cc[0], cc[1], cc[2], 1.0)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
@@ -781,15 +894,46 @@ def main() -> None:
         # modelview, sun) is world-AGNOSTIC and identical for every world — only
         # the drawn assets change, so the parallax/zoom/rotation feel is shared.
 
+        # Helper: lazily build Earth with async texture decode (P1.1 / P2.2).
+        # Each call returns quickly after the first successful build.  The flag
+        # _earth_failed prevents infinite retry on a permanent asset failure.
+        def _ensure_earth() -> bool:
+            nonlocal earth, _earth_failed
+            if earth is not None:
+                return True
+            if _earth_failed:
+                return False
+            try:
+                print("[main] Building Earth (async texture decode)…")
+                earth = Earth(async_load=True)
+                return True
+            except Exception as e:
+                print(f"[main] Earth unavailable ({e}); skipping Earth draws")
+                _earth_failed = True
+                return False
+
         # 1. Background — Earth's Milky Way + parallax stars, or an empty void.
-        if world.background == "stars":
+        if portal.background == "stars":
+            # Lazy-build Nebula and Stars on the first frame that needs them.
+            if nebula is None:
+                try:
+                    nebula = Nebula()
+                except Exception as e:
+                    print(f"[main] Nebula unavailable ({e})")
+            if stars is None:
+                try:
+                    stars = Stars()
+                except Exception as e:
+                    print(f"[main] Stars unavailable ({e})")
             # Milky Way (anchored to camera — feels infinitely distant)
-            glPushMatrix()
-            glTranslatef(cam_x, cam_y, cam_z)
-            nebula.draw(t_s, brightness=0.85)
-            glPopMatrix()
+            if nebula is not None:
+                glPushMatrix()
+                glTranslatef(cam_x, cam_y, cam_z)
+                nebula.draw(t_s, brightness=0.85)
+                glPopMatrix()
             # Multi-layer parallax stars
-            stars.draw(t_s, dpi_scale=dpi_scale)
+            if stars is not None:
+                stars.draw(t_s, dpi_scale=dpi_scale)
         # background == "void" → nothing drawn; the black clear colour IS the scene.
 
         # 2. Primary body. Most worlds anchor a single body at the (unchanged)
@@ -799,7 +943,7 @@ def main() -> None:
         #    at z = 0 — so it is handled before the Earth-anchor translate.
         hw, hh = om.window_half_extents(aspect, win_half_h)   # live aperture extents
 
-        if world.primary_mesh == "room":
+        if portal.primary_mesh == "room":
             # Wireframe shadow-box room — built lazily like Eye/Gem; on failure
             # fall back to Earth rather than crash the engine.
             if room is None:
@@ -807,14 +951,14 @@ def main() -> None:
                     room = GridRoom()
                 except Exception as e:
                     print(f"[main] Grid Room unavailable ({e}); falling back to Earth")
-                    world.select("earth")
+                    portal.select("earth")
             if room is not None:
-                room.draw(hw, hh, world.grid_depth, world.grid_divisions,
-                          world.grid_color, t_s, dpi_scale)
+                room.draw(hw, hh, portal.grid_depth, portal.grid_divisions,
+                          portal.grid_color, t_s, dpi_scale)
                 # World Builder: user-placed builtin primitives, drawn in world
                 # space right after the grid (same frame of reference). Built
                 # lazily + guarded; a failure here must never kill the wallpaper.
-                objs = world.placeable_objects
+                objs = portal.placeable_objects
                 if objs:
                     if placeables is None:
                         try:
@@ -824,12 +968,15 @@ def main() -> None:
                     if placeables is not None:
                         try:
                             placeables.draw(objs, hw, hh,
-                                            world.grid_depth, world.grid_divisions)
+                                            portal.grid_depth, portal.grid_divisions)
                         except Exception as e:
                             print(f"[main] placeable draw failed ({e}); skipping")
             else:
-                glPushMatrix(); glTranslatef(0.0, 0.0, OBJECTS["earth"][2])
-                earth.draw(sun_eye, t_s); glPopMatrix()
+                # GridRoom construction failed → fall back to Earth
+                if _ensure_earth():
+                    earth.poll_upload()
+                    glPushMatrix(); glTranslatef(0.0, 0.0, OBJECTS["earth"][2])
+                    earth.draw(sun_eye, t_s); glPopMatrix()
         else:
             bx, by, bz, pf = OBJECTS["earth"]
             wx = bx + cam_x * pf
@@ -839,19 +986,19 @@ def main() -> None:
             # Room's dimensions (aperture extents + grid_depth/grid_divisions). The
             # box is an ENVIRONMENT drawn in WORLD space (front rim on the glass at
             # z = 0), so it is built + drawn here, BEFORE the Earth-anchor translate.
-            if world.primary_mesh == "gem":
+            if portal.primary_mesh == "gem":
                 if gem is None:
                     try:
                         gem = Gem()
                     except Exception as e:
                         print(f"[main] The Gem unavailable ({e}); falling back to Earth")
-                        world.select("earth")
+                        portal.select("earth")
                 if gem is not None:
-                    gem.draw_box(hw, hh, world.grid_depth, world.grid_divisions)
+                    gem.draw_box(hw, hh, portal.grid_depth, portal.grid_divisions)
 
             glPushMatrix()
             glTranslatef(wx, wy, bz)
-            if world.primary_mesh == "eye":
+            if portal.primary_mesh == "eye":
                 # Build the eyeball lazily on first use; if its shader/textures fail
                 # to load, log and fall back to Earth rather than crash the engine.
                 if eye is None:
@@ -859,34 +1006,41 @@ def main() -> None:
                         eye = Eye()
                     except Exception as e:
                         print(f"[main] The Watcher unavailable ({e}); falling back to Earth")
-                        world.select("earth")
+                        portal.select("earth")
                 if eye is not None:
                     eye.draw(sun_eye, t_s)
                 else:
-                    earth.draw(sun_eye, t_s)
-            elif world.primary_mesh == "gem":
+                    if _ensure_earth():
+                        earth.poll_upload()
+                        earth.draw(sun_eye, t_s)
+            elif portal.primary_mesh == "gem":
                 # The Gem — brilliant-cut rotating gemstone, floating inside the
                 # checkered box drawn above. Built lazily there; if that failed the
                 # world has already been switched to Earth, so gem is non-None here.
                 if gem is not None:
                     gem.draw(sun_eye, fill_eye, t_s)
                 else:
-                    earth.draw(sun_eye, t_s)
+                    if _ensure_earth():
+                        earth.poll_upload()
+                        earth.draw(sun_eye, t_s)
             else:
-                earth.draw(sun_eye, t_s)
-                # Orbital icons live in EARTH-LOCAL space — drawn inside the very same
-                # transform so they inherit Earth's parallax, camera, projection and
-                # depth as one rigid body (real z-buffer occlusion, real perspective).
-                # Worlds may opt out (The Watcher exists alone — no icons).
-                if world.show_icons and not ICONS_OFF_FLAG.exists():
-                    icons.draw(dpi_scale)
+                # Earth world (default / explicit "earth" primary_mesh)
+                if _ensure_earth():
+                    earth.poll_upload()   # upload any decoded textures waiting in queue
+                    earth.draw(sun_eye, t_s)
+                    # Orbital icons live in EARTH-LOCAL space — drawn inside the very
+                    # same transform so they inherit Earth's parallax, camera,
+                    # projection and depth as one rigid body (real z-buffer occlusion,
+                    # real perspective). Worlds may opt out (The Watcher has no icons).
+                    if portal.show_icons and not ICONS_OFF_FLAG.exists():
+                        icons.draw(dpi_scale)
             glPopMatrix()
 
         # Opt-in window-frame anchor on the glass (world z = 0). Default OFF, so
         # the shipped Earth / Watcher / Gem worlds are unchanged; the Grid Room
         # draws its own rim, so it is excluded here.
-        if world.show_window_frame and world.primary_mesh != "room":
-            draw_window_frame(hw, hh, color=world.grid_color, dpi_scale=dpi_scale)
+        if portal.show_window_frame and portal.primary_mesh != "room":
+            draw_window_frame(hw, hh, color=portal.grid_color, dpi_scale=dpi_scale)
 
         # (Bloom Pass 2 removed — the scene is already on screen.)
 

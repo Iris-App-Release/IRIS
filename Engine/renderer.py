@@ -15,7 +15,9 @@ animation state — the renderer manages all GL state changes internally.
 import ctypes
 import json
 import math
+import queue
 import random
+import threading
 from collections import defaultdict
 from pathlib import Path
 
@@ -31,7 +33,7 @@ from Engine import camera_math as om
 from Engine.shader_loader import (
     load_program, load_texture_2d, bind_texture_unit, Uniforms,
 )
-from Worlds.placeable import grid_to_world, sanitize_objects
+from Portals.placeable import grid_to_portal, sanitize_objects
 
 HERE        = Path(__file__).parent.parent  # project root
 ASSETS      = HERE / "assets"
@@ -284,6 +286,23 @@ class Mesh:
         glDisableClientState(GL_NORMAL_ARRAY)
 
 
+# ── GL-resource helpers ───────────────────────────────────────────────────────
+
+def _make_placeholder_texture() -> int:
+    """Create a minimal 1×1 black GL_RGB texture as a load-time placeholder.
+    Used by Earth async loading: draw calls are safe immediately while real
+    textures decode on a background thread."""
+    tex = int(glGenTextures(1))
+    glBindTexture(GL_TEXTURE_2D, tex)
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1, 1, 0, GL_RGB, GL_UNSIGNED_BYTE,
+                 b"\x00\x00\x00")
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+    glBindTexture(GL_TEXTURE_2D, 0)
+    return tex
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  Earth (surface + clouds + atmosphere)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -300,8 +319,21 @@ class Earth:
 
     AXIAL_TILT_DEG = 23.5     # real Earth axial tilt
 
-    def __init__(self):
-        # Three concentric spheres
+    def __init__(self, async_load: bool = False):
+        """Construct the Earth scene object.
+
+        async_load=True (default when built lazily from app_engine):
+          • Geometry (VBOs) and shaders compile synchronously — fast, no GL risk.
+          • Four 8 K textures are decoded on a daemon thread; placeholder 1×1 black
+            textures let draw() run safely before real data arrives.  Call
+            poll_upload() once per frame from the GL thread to upload ready batches.
+          • textures_ready is False until all four real textures are uploaded.
+
+        async_load=False:
+          • Original synchronous path — all textures loaded before __init__ returns.
+          • textures_ready is True immediately.  Used by the profiling harness.
+        """
+        # Three concentric spheres — always built synchronously (fast, no IO)
         v, n, u, i = make_sphere(self.R_SURFACE,    96, 96)
         self.surface = Mesh(v, n, u, i)
         v, n, u, i = make_sphere(self.R_CLOUDS,     96, 96)
@@ -309,15 +341,7 @@ class Earth:
         v, n, u, i = make_sphere(self.R_ATMOSPHERE, 64, 64)
         self.atmo = Mesh(v, n, u, i)
 
-        # Textures — flip_v=False because equirectangular maps store north-pole
-        # at the top row; the sphere UV has v=0 at y=+1 (north), so the image
-        # must NOT be flipped before upload or the globe is upside-down.
-        self.tex_day      = load_texture_2d(ASSETS / "earth" / "earth_day.jpg",      flip_v=False)
-        self.tex_night    = load_texture_2d(ASSETS / "earth" / "earth_night.jpg",    flip_v=False)
-        self.tex_clouds   = load_texture_2d(ASSETS / "earth" / "earth_clouds.jpg",   flip_v=False)
-        self.tex_specular = load_texture_2d(ASSETS / "earth" / "earth_specular.jpg", flip_v=False)
-
-        # Shader programs
+        # Shader programs — compile synchronously (fast, no IO after first run)
         self.prog_earth  = load_program("earth",      SHADERS_DIR)
         self.prog_clouds = load_program("clouds",     SHADERS_DIR)
         self.prog_atmo   = load_program("atmosphere", SHADERS_DIR)
@@ -329,6 +353,122 @@ class Earth:
         self.surface_spin = 0.0     # degrees
         self.cloud_spin   = 0.0
         self.cloud_uv_off = 0.0
+
+        # Async texture loading (P2.2).
+        # _upload_queue carries decoded (name, w, h, raw_bytes) tuples from the
+        # worker thread to poll_upload() on the GL thread.  Using a queue rather
+        # than a lock+dict keeps the synchronisation trivially safe.
+        self._upload_queue  : "queue.Queue | None" = None
+        self._textures_done : int  = 0    # how many of the 4 textures are uploaded
+        self.textures_ready : bool = False
+
+        _TEX_PATHS = {
+            "day":      (ASSETS / "earth" / "earth_day.jpg",      "tex_day"),
+            "night":    (ASSETS / "earth" / "earth_night.jpg",    "tex_night"),
+            "clouds":   (ASSETS / "earth" / "earth_clouds.jpg",   "tex_clouds"),
+            "specular": (ASSETS / "earth" / "earth_specular.jpg", "tex_specular"),
+        }
+
+        if async_load:
+            # Create placeholder textures so draw() is safe before real data
+            # arrives (renders as solid black, which transitions to the real
+            # Earth as each texture uploads over the next ~0.5–1 s).
+            self.tex_day      = _make_placeholder_texture()
+            self.tex_night    = _make_placeholder_texture()
+            self.tex_clouds   = _make_placeholder_texture()
+            self.tex_specular = _make_placeholder_texture()
+            self._upload_queue = queue.Queue()
+            threading.Thread(
+                target=self._decode_worker,
+                args=(_TEX_PATHS, self._upload_queue),
+                daemon=True,
+                name="Earth.TextureDecode",
+            ).start()
+            print("[Earth] async texture decode started (placeholder active)")
+        else:
+            # Original synchronous path — textures loaded before returning.
+            # flip_v=False: equirectangular maps store north-pole at the top row;
+            # the sphere UV has v=0 at y=+1 (north), so do NOT flip.
+            self.tex_day      = load_texture_2d(ASSETS / "earth" / "earth_day.jpg",      flip_v=False)
+            self.tex_night    = load_texture_2d(ASSETS / "earth" / "earth_night.jpg",    flip_v=False)
+            self.tex_clouds   = load_texture_2d(ASSETS / "earth" / "earth_clouds.jpg",   flip_v=False)
+            self.tex_specular = load_texture_2d(ASSETS / "earth" / "earth_specular.jpg", flip_v=False)
+            self.textures_ready = True
+
+    @staticmethod
+    def _decode_worker(tex_paths: dict, out_q: "queue.Queue") -> None:
+        """Worker thread: decode JPEG files to raw bytes WITHOUT touching GL.
+        Each decoded texture is put onto out_q as (attr_name, w, h, raw_bytes)
+        so the GL thread can upload it at its own pace."""
+        import pygame as _pg
+        for name, (path, attr) in tex_paths.items():
+            try:
+                surf = _pg.image.load(str(path))
+                surf = surf.convert(24)         # RGB, drop alpha channel if any
+                w, h = surf.get_size()
+                raw  = _pg.image.tostring(surf, "RGB", False)   # flip_v=False
+                out_q.put((attr, w, h, raw))
+                print(f"[Earth] decoded {name} {w}×{h}")
+            except Exception as e:
+                print(f"[Earth] decode failed for {name}: {e}")
+
+    def poll_upload(self) -> bool:
+        """Upload any decoded textures that are waiting in the queue.
+        MUST be called from the GL thread (once per frame is sufficient).
+        Returns True once all four real textures are fully uploaded."""
+        if self.textures_ready or self._upload_queue is None:
+            return self.textures_ready
+        while True:
+            try:
+                attr, w, h, raw = self._upload_queue.get_nowait()
+            except queue.Empty:
+                break
+            tex = getattr(self, attr, None)
+            if tex is None:
+                continue
+            try:
+                glBindTexture(GL_TEXTURE_2D, tex)
+                glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, h, 0,
+                             GL_RGB, GL_UNSIGNED_BYTE, raw)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                                GL_LINEAR_MIPMAP_LINEAR)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+                glGenerateMipmap(GL_TEXTURE_2D)
+                glBindTexture(GL_TEXTURE_2D, 0)
+                self._textures_done += 1
+                print(f"[Earth] uploaded {attr} ({self._textures_done}/4)")
+            except Exception as e:
+                print(f"[Earth] upload failed for {attr}: {e}")
+        if self._textures_done >= 4:
+            self.textures_ready = True
+            print("[Earth] all textures ready")
+        return self.textures_ready
+
+    def destroy(self) -> None:
+        """Release all GPU resources owned by this object.
+        Call before discarding the instance when switching away from the Earth
+        world so that VRAM and driver buffers are freed promptly (P1.1)."""
+        try:
+            glDeleteTextures([self.tex_day, self.tex_night,
+                              self.tex_clouds, self.tex_specular])
+        except Exception:
+            pass
+        for mesh in (self.surface, self.clouds, self.atmo):
+            bufs = [b for b in (mesh._vbo_v, mesh._vbo_n,
+                                mesh._vbo_t, mesh._ebo) if b is not None]
+            if bufs:
+                try:
+                    glDeleteBuffers(len(bufs), bufs)
+                except Exception:
+                    pass
+        for prog in (self.prog_earth, self.prog_clouds, self.prog_atmo):
+            try:
+                glDeleteProgram(prog)
+            except Exception:
+                pass
 
     def update(self, dt: float):
         # Earth rotates ~6°/sec (≈60 sec per full turn) — slow & cinematic
@@ -750,6 +890,19 @@ class Stars:
         glDisable(GL_BLEND)
         glUseProgram(0)
 
+    def destroy(self) -> None:
+        """Release GPU resources (shader + VBOs). No texture owned by Stars."""
+        try:
+            glDeleteProgram(self.prog)
+        except Exception:
+            pass
+        for b in (self._vbo_v, self._vbo_c, self._vbo_s, self._vbo_t):
+            if b is not None:
+                try:
+                    glDeleteBuffers(1, [b])
+                except Exception:
+                    pass
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Milky-Way nebula background
@@ -793,6 +946,21 @@ class Nebula:
         glEnable(GL_DEPTH_TEST)
         glDepthMask(GL_TRUE)
         glUseProgram(0)
+
+    def destroy(self) -> None:
+        """Release GPU resources (texture + shader + VBOs)."""
+        try:
+            glDeleteTextures([self.tex])
+            glDeleteProgram(self.prog)
+        except Exception:
+            pass
+        bufs = [b for b in (self.mesh._vbo_v, self.mesh._vbo_n,
+                             self.mesh._vbo_t, self.mesh._ebo) if b is not None]
+        if bufs:
+            try:
+                glDeleteBuffers(len(bufs), bufs)
+            except Exception:
+                pass
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1302,7 +1470,7 @@ class PlaceableObjects:
     """World Builder — draws user-placed builtin primitives inside the Grid Room.
 
     Drawn in WORLD space immediately after GridRoom (no Earth-anchor translate), so
-    a cell maps straight onto the grid via Worlds.placeable.grid_to_world. v1 is
+    a cell maps straight onto the grid via Portals.placeable.grid_to_portal. v1 is
     fixed-function flat/emissive colour — the frozen shaders/ are provably untouched
     and there is no live GL-compile risk (see plan §4).
 
@@ -1348,7 +1516,7 @@ class PlaceableObjects:
             mesh = self._mesh(obj["model"])
             if mesh is None:
                 continue
-            wx, wy, wz = grid_to_world(*obj["grid_position"],
+            wx, wy, wz = grid_to_portal(*obj["grid_position"],
                                        half_w, half_h, depth, divisions)
             r, g, b = obj["color"]
             rx, ry, rz = obj["rotation"]

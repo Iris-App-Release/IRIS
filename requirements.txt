@@ -8,6 +8,11 @@ opencv-python-headless>=4.8.0
 mediapipe>=0.10.9
 Pillow>=10.0.0
 
+# World Builder — Claude-assisted authoring call (UI/world_builder_api.py).
+# Optional at runtime: if the SDK or an API key is absent, generate_world_objects
+# returns [] and the HUD just toasts — the core wallpaper never depends on it.
+anthropic>=0.40.0
+
 # PyObjC frameworks (macOS only — desktop wallpaper window level + camera permission)
 # Safe to skip on non-Mac; tracker and main fall back gracefully without them.
 # NOTE: AppKit Python bindings ship INSIDE pyobjc-framework-Cocoa

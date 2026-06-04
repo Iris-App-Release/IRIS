@@ -196,13 +196,23 @@ frame:
 ## Controls
 
 Everything is keyed to the **tab bar** (top-centre, always visible across all four
-tabs): **Worlds · World Builder · Community · Settings**. The scheme is inverted —
-the **occupied tab is a black pill** (white text); the rest are **white pills**
-(black text) on the lighter opaque grey bar, each with an instant hover highlight.
-`self._active_tab` drives the whole layout; switching is instant (no reload). The
-tab bar is **drawn last, directly on the output surface — not on the idle-faded
-layer** — so on the Worlds tab it never dims and its hover feedback is always crisp
-(the idle-fade easing previously read as hover lag here).
+tabs): **Worlds · World Builder · Community · Settings**. It reads as a **row of
+push-buttons** on a floating white container. **World Builder is ALWAYS the orange
+accent pill** — a fixed CTA; the highlight never migrates to whichever tab is
+selected. The other three are **dark-grey pills** (`GREY_CONTAINER`, light text
+that brightens on hover). Whichever tab is **occupied** sinks into the **"click-in"
+(pressed) state** — the orange Builder via `force_press` on the shared Button, the
+grey tabs via `_draw_grey_tab` (a matching 0.98 shrink + darker fill + inset top
+edge) — so the toggled tab reads as pressed-in regardless of colour. **Every** tab
+(occupied or not) carries the *same* stationary soft drop shadow — the lift that
+used to appear only on hover — drawn via `_soft_shadow`, so the unoccupied pills
+visibly float. The previous **loud yellow `_outer_glow`** halo behind the active
+tab was removed (it read as a constant loud shadow); the same de-loudening dropped
+the Send pill's resting glow. `self._active_tab`
+drives the whole layout; switching is instant (no reload). The tab bar is **drawn
+last, directly on the output surface — not on the idle-faded layer** — so on the
+Worlds tab it never dims and its hover feedback is always crisp (the idle-fade
+easing previously read as hover lag here).
 
 ### Worlds tab
 
@@ -257,6 +267,16 @@ A **full white page** with two sub-views of the one `grid_room` world (`_wb_view
   right = build settings. Bold navy titles. The **Preview** button (white pill on
   grey, key `wb_preview`) sits on the tab-bar row sized to the right panel, with
   the right panel directly under it.
+- **Shadow layering (drawn in three passes).** `_premium_card` takes a `phase`
+  arg so a foreground object can be sandwiched between a card's shadow and its
+  fill. The grid view draws the panel **shadows first** (`phase="back"`), then the
+  **cube**, then the panel **fills** (`phase="front"`) — so each panel's shadow
+  falls **behind** the cube (the cube occludes its inner half) instead of across
+  it. The right column's shadow is cast for a **taller `shadow_rect`** that
+  stretches **up to the Preview button**, so the right side reads as one
+  continuous shadow at the **same height as the left panel** (the Preview capsule
+  itself is then fill-only). The cube's own **contact shadow** is spread across
+  its **whole base footprint** (was a tight central blob) so it reads as grounded.
 - **Preview** (`preview`) — transparent over the live off-axis render of
   `grid_room` (`preview_active` True). A detached grey **"Back to Canvas"** tab
   pill (`wb_back`) floats top-left so the user can iterate without losing work.

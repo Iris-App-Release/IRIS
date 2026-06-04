@@ -88,18 +88,50 @@ MODEL_URL   = (
     "face_landmarker/face_landmarker/float16/latest/face_landmarker.task"
 )
 
-# ── MediaPipe Tasks probe ──────────────────────────────────────────────────────
-_MP_AVAILABLE = False
-try:
-    import mediapipe as mp
-    from mediapipe.tasks.python import vision as _mp_vision
-    from mediapipe.tasks.python.core.base_options import BaseOptions as _BaseOptions
-    _RunningMode    = _mp_vision.RunningMode
-    _FaceLMOptions  = _mp_vision.FaceLandmarkerOptions
-    _FaceLM         = _mp_vision.FaceLandmarker
-    _MP_AVAILABLE   = True
-except ImportError:
-    pass
+# ── MediaPipe Tasks — deferred import ─────────────────────────────────────────
+# mediapipe is imported lazily inside _ensure_mediapipe() rather than here.
+# At module-import time mediapipe transitively loads matplotlib.pyplot (~395 ms)
+# and sounddevice (~159 ms), neither of which IRIS uses. Deferring the import
+# to the worker thread's first tick saves ~550 ms of startup time and avoids
+# loading those libraries in sessions where the camera is never enabled.
+#
+# All six references to mediapipe symbols (_mp, _mp_vision, _BaseOptions, …) are
+# populated by _ensure_mediapipe() before _step_mp() can be called, because
+# _run() invokes _ensure_mediapipe() first and _step_mp is only reachable from
+# _run(). Thread safety: the globals are written once (inside the worker thread,
+# before the main loop), never concurrently.
+_MP_AVAILABLE  = False
+_mp            = None   # mediapipe module
+_mp_vision     = None   # mediapipe.tasks.python.vision
+_BaseOptions   = None   # mediapipe.tasks.python.core.base_options.BaseOptions
+_RunningMode   = None   # _mp_vision.RunningMode
+_FaceLMOptions = None   # _mp_vision.FaceLandmarkerOptions
+_FaceLM        = None   # _mp_vision.FaceLandmarker
+
+
+def _ensure_mediapipe() -> bool:
+    """Import mediapipe and populate the module-level symbol refs on first call.
+    Called from the worker thread before the capture loop starts, so all GL /
+    main-thread imports have already settled. Returns True if mediapipe is usable."""
+    global _MP_AVAILABLE, _mp, _mp_vision, _BaseOptions
+    global _RunningMode, _FaceLMOptions, _FaceLM
+    if _MP_AVAILABLE:
+        return True
+    try:
+        import mediapipe as _mediapipe
+        from mediapipe.tasks.python import vision as _mpv
+        from mediapipe.tasks.python.core.base_options import BaseOptions as _BO
+        _mp            = _mediapipe
+        _mp_vision     = _mpv
+        _BaseOptions   = _BO
+        _RunningMode   = _mpv.RunningMode
+        _FaceLMOptions = _mpv.FaceLandmarkerOptions
+        _FaceLM        = _mpv.FaceLandmarker
+        _MP_AVAILABLE  = True
+        log.info("mediapipe loaded on worker thread (deferred import)")
+    except ImportError as e:
+        log.warning("mediapipe unavailable (%s); will use Haar fallback", e)
+    return _MP_AVAILABLE
 
 
 # ── Model download ─────────────────────────────────────────────────────────────
@@ -464,7 +496,7 @@ class FaceTracker:
 
     # ── Main loop — owns the camera lifecycle ─────────────────────────────────
     def _run(self) -> None:
-        use_mp = _MP_AVAILABLE and _ensure_model()
+        use_mp = _ensure_mediapipe() and _ensure_model()
         self.has_rotation = use_mp
         engine = "MediaPipe FaceLandmarker" if use_mp else "Haar cascade"
         log.info("tracker worker started — engine: %s", engine)
@@ -616,7 +648,7 @@ class FaceTracker:
             ctx["landmarker"] = _FaceLM.create_from_options(options)
 
         rgb    = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        mp_img = _mp.Image(image_format=_mp.ImageFormat.SRGB, data=rgb)
         result = ctx["landmarker"].detect_for_video(mp_img, self._next_video_ts(ctx))
 
         if not result.face_landmarks:
