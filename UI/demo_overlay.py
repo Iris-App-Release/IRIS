@@ -1776,7 +1776,20 @@ class DemoOverlay:
         and both axes share square 1 in the bottom-left corner. Depth squares run
         down-left along the floor's left edge. Static (no per-frame state).
         """
-        D = 8                                       # squares per axis (grid_room default)
+        # Single source of truth: the divisions AND the placeable objects both come
+        # from the SAME grid_room world.json the parallax engine renders (world_runtime
+        # hot-reloads it on Send / Save / CLI). Reading ONE source is what guarantees
+        # the oblique grid and the live 3-D preview can never disagree about what is in
+        # the world. Falls back to the last in-app Send result only if the file is
+        # momentarily unreadable (mid-write). Cheap: this method only runs on a
+        # signature cache-miss (which includes the scratch mtime), never per frame.
+        try:
+            _scratch = json.loads(self._grid_room_path().read_text())
+            D = int(_scratch.get("rendering", {}).get("grid_divisions", 8) or 8)
+            objs = _scratch.get("assets", {}).get("placeable_objects", []) or []
+        except Exception:
+            D = 8                                   # grid_room default
+            objs = self._wb_preview_objects or []
         ANG = math.radians(30.0)
         ca, sa = math.cos(ANG), math.sin(ANG)       # exact 30° oblique direction
         dr = 0.55                                   # depth foreshortening (cabinet-ish)
@@ -1874,39 +1887,34 @@ class DemoOverlay:
             _text_shadow(layer, str(c), self.fnt_small, NUM, P(c - 0.5, 0.5, 0), S)
         for r in range(2, D + 1):
             _text_shadow(layer, str(r), self.fnt_small, NUM, P(0.5, r - 0.5, 0), S)
-        # Depth labels: 1=near glass, D=back wall — all three axes share cube 1 at
-        # the front-bottom-left corner of the canvas box.
-        for d in range(1, D + 1):
-            _text_shadow(layer, str(d), self.fnt_small, NUM, P(0, 0.5, d - 0.5), S)
+        # Depth labels in ENGINE gz units, so the ruler is a trustworthy readout:
+        # 1 = nearest the glass, D = back wall — matching Worlds.placeable.grid_to_world
+        # (gz=0 at the glass). The canvas's bright undistorted face is the BACK wall
+        # (canvas z=0), so engine depth g is drawn at canvas z = D-g+0.5 (g=1 lands at
+        # the front opening, g=D on the back grid) — the same D-gz flip the objects use.
+        for g in range(1, D + 1):
+            _text_shadow(layer, str(g), self.fnt_small, NUM, P(0, 0.5, D - g + 0.5), S)
 
-        # ── Previewed objects from the last Send (transient; not yet saved) ─────
-        # The placeable coord system is CENTRED (gx,gy ∈ [-D/2..D/2], gz ∈ [0..D]
-        # with 0 = glass), while this oblique canvas addresses a CORNER-origin cube
-        # (0..D on every axis, gz = 0 at the back wall). Convert, then paint back
-        # (far) → front (near) so nearer objects overlap farther ones correctly.
-        # Fall back to the scratch world.json when no in-app Send has been run yet
-        # (e.g. objects placed via the CLI or /world-builder-live skill).
-        objs = self._wb_preview_objects
-        if not objs:
-            try:
-                scratch = json.loads(self._grid_room_path().read_text())
-                objs = scratch.get("assets", {}).get("placeable_objects", []) or []
-            except Exception:
-                objs = []
+        # ── Placeable objects — drawn through the SHARED coordinate transform ────
+        # `objs` was read at the top of this method from the same grid_room scratch
+        # the parallax renders. Each object is mapped to a canvas cell by
+        # Worlds.placeable.grid_to_canvas_cell — the single source of truth that also
+        # backs the 3-D grid_to_world — so a cell's square here and its position in the
+        # live preview are guaranteed to agree (origin shift + gz=0=glass depth flip
+        # both live in that one function). sanitize_objects applies the EXACT clamp /
+        # allowlist / count-cap the GL renderer (PlaceableObjects.draw) applies, so the
+        # two views render a byte-identical object set.
         if objs:
+            from Worlds.placeable import grid_to_canvas_cell, sanitize_objects
             items = []
-            for o in objs:
-                try:
-                    gx, gy, gz = o["grid_position"]
-                except (KeyError, TypeError, ValueError):
-                    continue
-                # gx/gy: centred [-D/2..D/2] → corner-origin [0..D] for P().
-                # gz: engine and canvas share the same convention (0=glass, D=back wall),
-                # so no flip — just pass gz directly. Sort descending so back wall draws first.
-                items.append((gz, gx + D / 2.0, gy + D / 2.0, o))
-            items.sort(key=lambda t: t[0], reverse=True)   # back wall (gz≈D) drawn first
-            for gz_val, cgx, cgy, o in items:
-                self._draw_canvas_object(layer, P, u, cgx, cgy, gz_val, o, S)
+            for o in sanitize_objects(objs, D):
+                cgx, cgy, cgz = grid_to_canvas_cell(*o["grid_position"], D)
+                items.append((cgz, cgx, cgy, o))
+            # Painter's order: back wall (cgz≈0, farthest) first → glass (cgz≈D,
+            # nearest) last, so nearer objects correctly overlap farther ones.
+            items.sort(key=lambda t: t[0])
+            for cgz, cgx, cgy, o in items:
+                self._draw_canvas_object(layer, P, u, cgx, cgy, cgz, o, S)
 
     def _draw_canvas_object(self, layer, P, u, cgx, cgy, cgz, obj, S) -> None:
         """Blit a pre-rendered oblique mesh sprite onto the canvas.

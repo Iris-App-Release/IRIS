@@ -54,6 +54,38 @@ def grid_to_world(gx: float, gy: float, gz: float,
     return (wx, wy, wz)
 
 
+def grid_to_canvas_cell(gx: float, gy: float, gz: float, divisions: int):
+    """Map a centred placeable cell to the World Builder oblique canvas's cell space.
+
+    This is the SECOND half of the single source of truth (the first is
+    `grid_to_world`, used by the 3-D parallax renderer). The 2-D oblique grid in the
+    HUD must place an object on the same square the 3-D world places it, so both
+    renderers derive every object position from THIS module — never from ad-hoc
+    inline math that can silently drift (the historical grid↔parallax disconnect).
+
+    Two convention shifts happen here, and ONLY here:
+
+      • Origin: the engine/Claude convention is CENTRED (gx,gy ∈ [-D/2 .. +D/2],
+        0 = centre); the oblique canvas addresses a CORNER-origin cube
+        (0 .. D on each axis). So gx,gy are shifted by +D/2.
+
+      • Depth: the engine runs gz=0 at the GLASS (nearest the viewer) → gz=D at the
+        BACK wall (see `grid_to_world`: wz = -(gz/D)*depth, glass at z=0). The
+        oblique canvas draws its bright, undistorted face as the BACK wall (canvas
+        z=0) and opens toward the viewer to the glass (canvas z=D). To keep the two
+        views consistent, depth is FLIPPED: cgz = D - gz. An object the parallax
+        renders at the glass (gz=0) is drawn at the canvas front opening (cgz=D);
+        one at the back wall (gz=D) lands on the bright back grid (cgz=0).
+
+    Returns corner-origin canvas cell coords (cgx, cgy, cgz), each in [0, D], ready
+    to feed the canvas's oblique projection P().
+    """
+    D = max(1, int(divisions))
+    return (gx + D / 2.0,        # left/right : centred → corner origin
+            gy + D / 2.0,        # down/up    : centred → corner origin
+            D - gz)             # depth      : glass(gz 0)→front(cgz D), back(gz D)→back grid(cgz 0)
+
+
 def sanitize_objects(raw, divisions: int) -> list[dict]:
     """Return a list of validated, clamped object dicts; skip malformed ones.
 

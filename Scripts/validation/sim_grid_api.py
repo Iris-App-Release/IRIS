@@ -42,9 +42,13 @@ import numpy as np
 
 from Engine import camera_math as om
 from Worlds.placeable import (
-    grid_to_world, sanitize_objects,
+    grid_to_world, grid_to_canvas_cell, sanitize_objects,
     BUILTIN_PRIMITIVES, MAX_OBJECTS, SCALE_MAX,
 )
+
+
+def _sign(x: float) -> int:
+    return (x > 1e-9) - (x < -1e-9)
 
 VP_W, VP_H = 2560.0, 1600.0
 ASPECT     = VP_W / VP_H
@@ -172,6 +176,47 @@ def main() -> int:
     check("a world dict with no 'assets' block sanitizes to an empty list",
           sanitize_objects([], D) == [],
           "empty placeable_objects → nothing drawn")
+
+    # ── 6. Grid↔parallax sync — the oblique HUD grid and the 3-D world derive every
+    #       object position from ONE transform pair and can never disagree ─────────
+    print("\n6. Grid↔parallax sync — oblique canvas cell vs 3-D world coord agree on every axis")
+    cc_glass = grid_to_canvas_cell(0, 0, 0, D)     # engine glass (gz=0)
+    cc_back  = grid_to_canvas_cell(0, 0, D, D)     # engine back wall (gz=D)
+    check("centre cell maps to the canvas box centre (cgx=cgy=D/2)",
+          abs(cc_glass[0] - D / 2) < 1e-9 and abs(cc_glass[1] - D / 2) < 1e-9,
+          f"{cc_glass[:2]}")
+    check("engine glass (gz=0) maps to the canvas front opening (canvas z=D)",
+          abs(cc_glass[2] - D) < 1e-9, f"cgz={cc_glass[2]}")
+    check("engine back wall (gz=D) maps to the canvas back grid (canvas z=0)",
+          abs(cc_back[2]) < 1e-9, f"cgz={cc_back[2]}")
+    # Direction agreement over all 8 corners + interior samples: a cell that is right /
+    # up / deeper in the 3-D world must be right / up / deeper on the 2-D grid too.
+    samples = [(gx, gy, gz) for gx in (-D / 2, 0, D / 2) for gy in (-D / 2, 0, D / 2)
+               for gz in (0, D / 2, D)]
+    agree = True
+    for gx, gy, gz in samples:
+        wx, wy, wz = grid_to_world(gx, gy, gz, hw, hh, DEPTH, D)
+        cgx, cgy, cgz = grid_to_canvas_cell(gx, gy, gz, D)
+        if _sign(cgx - D / 2) != _sign(wx):        # left/right
+            agree = False
+        if _sign(cgy - D / 2) != _sign(wy):        # down/up
+            agree = False
+        if _sign(D - cgz) != _sign(-wz):           # depth-from-glass direction
+            agree = False
+    check("X side, Y side, and depth direction agree between the grid and the world "
+          "for every sampled cell", agree, f"{len(samples)} cells")
+    # Monotonic depth: a deeper cell is deeper on BOTH the grid and in the world — this
+    # is exactly the invariant the historical depth inversion broke.
+    deep = True
+    for gz_a, gz_b in ((0, 4), (4, 8), (1, 7)):
+        cz_a = grid_to_canvas_cell(0, 0, gz_a, D)[2]
+        cz_b = grid_to_canvas_cell(0, 0, gz_b, D)[2]
+        wz_a = grid_to_world(0, 0, gz_a, hw, hh, DEPTH, D)[2]
+        wz_b = grid_to_world(0, 0, gz_b, hw, hh, DEPTH, D)[2]
+        if not ((D - cz_a) < (D - cz_b) and wz_a > wz_b):
+            deep = False
+    check("a deeper cell is deeper on BOTH the grid and in the parallax world "
+          "(no depth inversion)", deep)
 
     print()
     if _fail:

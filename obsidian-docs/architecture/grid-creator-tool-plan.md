@@ -676,7 +676,21 @@ Re-stated from `CLAUDE.md` + [[constraints]] so a fresh session can't miss them:
 
 ---
 
+## Update — 2026-06-05: grid ↔ parallax unification sprint
+
+The oblique grid and the parallax preview were **two disconnected representations** of the
+same world (the grid hardcoded `D=8`, **inverted depth**, and read a different source than
+the parallax). Fixed by routing **both** renderers through one shared transform pair in
+`Worlds/placeable.py` — `grid_to_world` (3-D) + new `grid_to_canvas_cell` (oblique grid) —
+and making the grid read the same `grid_room/world.json` the parallax renders. New
+`sim_grid_api.py` §6 pins the sync; **12/12 sims green**. Full audit, unified schema,
+generation review, text-to-3D + scan-import research, and the forward roadmap are in the
+sprint vault: **[[world-builder/index|World Builder Unification Sprint]]** →
+[[WORLD_BUILDER_AUDIT]] · [[WORLD_SCHEMA]] · [[WORLD_BUILDER_LIVE_REVIEW]] ·
+[[TEXT_TO_3D_RESEARCH]] · [[SCAN_IMPORT_ARCHITECTURE]] · [[IMPLEMENTATION_ROADMAP]].
+
 ## Related
 [[grid-api-customization]] · [[productification]] · [[world-system]] · [[grid-room]] ·
 [[constraints]] · [[design-decisions]] · [[ui-reorg-architecture]] · [[menu-bar-ui]] ·
-[[headless-simulation]] · [[grids-dont-pan]]
+[[headless-simulation]] · [[grids-dont-pan]] · [[WORLD_BUILDER_AUDIT]] · [[WORLD_SCHEMA]] ·
+[[IMPLEMENTATION_ROADMAP]]
