@@ -140,13 +140,18 @@ def main() -> int:
     _click(o, o, "primary")  # resume
     check("master-off flag cleared on Resume", not ov_mod.TRACKING_OFF_FLAG.exists())
 
-    # ── 5. Reopen routing (daemon already running) ─────────────────────────────
-    print("\nReopen routing (daemon running):")
+    # ── 5. Reopen routing ──────────────────────────────────────────────────────
+    print("\nReopen routing:")
+    # 5a. Daemon already running — don't auto-start tracking (daemon owns camera).
     o2 = DemoOverlay(W, H, scale=S, daemon_running=True, desktop_paused=False)
-    check("opens into main interface, floating", o2.live is False)
-    check("primary is Disable (not a landing page)",
+    check("daemon running: opens floating (no double tracking)", o2.live is False)
+    check("daemon running: primary is Disable",
           o2._primary() == ("Disable Desktop Mode", "disable_desktop"), repr(o2._primary()))
-    check("never auto-requests the camera", o2.tracking_requested is False)
+    check("daemon running: never auto-requests camera", o2.tracking_requested is False)
+    # 5b. No daemon, previously onboarded (macOS TCC already granted) — auto-start.
+    o2b = DemoOverlay(W, H, scale=S, daemon_running=False, desktop_paused=False)
+    check("re-open after onboard: auto-starts live tracking (no re-toggle needed)",
+          o2b.live is True and o2b.tracking_requested is True)
 
     # ── 6. Scripted idle bounded ───────────────────────────────────────────────
     print("\nScripted idle motion:")

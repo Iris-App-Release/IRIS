@@ -460,12 +460,24 @@ class DemoOverlay:
         # truth the engine polls; persists across restarts.
         self.camera_enabled = not CAMERA_OFF_FLAG.exists()
 
+        # Auto-resume tracking on every re-open after the first camera grant.
+        # `onboarded` is True once the user has previously completed the camera
+        # flow (macOS TCC permission granted + head data confirmed flowing).
+        # After that point, forcing the user to re-toggle the camera every launch
+        # is wrong — the permission is persistent on the Mac side, so the app
+        # should honour it silently. Only show "Enable Camera for Desktop Mode"
+        # if the user deliberately turned camera OFF in Settings (CAMERA_OFF_FLAG).
+        # Don't auto-start if a daemon is already running — it owns the camera;
+        # the demo window just shows the "Disable Desktop Mode" control.
+        _auto_start = self.camera_enabled and self.onboarded and not self.daemon_running
+
         # Public signals the engine reads each frame
-        self.tracking_requested     = False
+        self.tracking_requested     = _auto_start
         self.desktop_mode_requested = False
         self.should_quit            = False
         self.tracking_active        = False   # engine: real head data is flowing
         self.camera_denied          = False   # engine: camera access denied/unavailable
+        self.live                   = _auto_start   # skip floating-preview on re-open
 
         # Fonts (sized in physical px)
         S = self.s
