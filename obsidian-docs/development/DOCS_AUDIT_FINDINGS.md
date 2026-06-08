@@ -1,3 +1,11 @@
+---
+title: Obsidian Documentation Audit — Findings
+type: audit
+related: [DOCS_AUDIT_SUMMARY, design-decisions, gem, known_issues]
+last_updated: 2026-06-01
+sources: [obsidian-docs/, Worlds/the_watcher/world.json, Worlds/gem/world.json]
+---
+
 # Obsidian Documentation Audit Findings
 **Date:** 2026-06-01  
 **Status:** ✅ COMPLETE — All 6 inaccuracies fixed
@@ -186,4 +194,8 @@ sources: [Worlds/gem/world.json, Engine/renderer.py, shaders/gem.vert, shaders/g
 2. **Cross-reference sources:** When docs cite a specific file:line, verify it still matches on each edit
 3. **Sync world schemas:** The world.json schema in system-interactions.md should be generated from actual deployed worlds, not imagined options
 4. **Naming consistency:** Adopt a rule: directory name = reference name (gem/ → [[gem]] or the-gem/ → [[the-gem]])
+
+## Related
+
+[[DOCS_AUDIT_SUMMARY]] · [[design-decisions]] · [[gem]] · [[known_issues]]
 

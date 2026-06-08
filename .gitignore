@@ -47,3 +47,8 @@ env/
 models/*.bin
 models/*.onnx
 models/*.tflite
+
+# Obsidian — ignore volatile workspace state only; keep the rest of .obsidian/ config tracked
+obsidian-docs/.obsidian/workspace.json
+obsidian-docs/.obsidian/workspace-mobile.json
+obsidian-docs/.obsidian/cache

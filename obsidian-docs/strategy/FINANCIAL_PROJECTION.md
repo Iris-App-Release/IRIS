@@ -1,3 +1,11 @@
+---
+title: Financial Projection & Success Estimation
+type: strategy
+related: [productification, IRIS_PROJECT_STATE_OF_THE_UNION, version-history, constraints, current-focus]
+last_updated: 2026-06-01
+sources: [obsidian-docs/productification.md, Docs/IRIS_OVERVIEW.txt]
+---
+
 # IRIS: Financial Projection & Success Estimation
 
 **Date:** 2026-06-01  
@@ -326,3 +334,7 @@ If IRIS reaches Scenario C (Optimistic):
 ---
 
 **Next step:** Would you like help prioritizing the launch roadmap, or digging deeper into any of these scenarios?
+
+## Related
+
+[[productification]] · [[IRIS_PROJECT_STATE_OF_THE_UNION]] · [[version-history]] · [[constraints]] · [[current-focus]]

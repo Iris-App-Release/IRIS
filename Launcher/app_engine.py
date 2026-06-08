@@ -429,6 +429,16 @@ def main() -> None:
     # Camera/parallax are world-agnostic; only the drawn assets change.
     from Worlds.world_runtime import WorldRuntime, resolve_worlds_dir
     world = WorldRuntime(resolve_worlds_dir(_BUNDLE_BASE), PREFS_FILE)
+
+    # World paywall: locked worlds (gem, the_watcher) preview freely in the demo but
+    # require Pro to be SET as the live wallpaper. Read fresh each Desktop-Mode
+    # attempt so a purchase/dev-grant takes effect live. FAIL-OPEN: if licensing
+    # can't import, never block — a paywall bug must never brick the engine.
+    try:
+        from Licensing.entitlement import EntitlementChecker
+        _entitlement = EntitlementChecker()
+    except Exception:
+        _entitlement = None
     eye   = None   # The Watcher's eyeball — built lazily + guarded on first use,
                    # so an Earth-only session never touches the eye shader/texture.
     gem   = None   # The Gem — built lazily on first use, same guard pattern.
@@ -609,7 +619,8 @@ def main() -> None:
             # textures across the resize, so only the viewport + aspect are
             # updated. The window stays in the Dock (not accessory) so the user can
             # always quit it (Cmd-Q / Dock → Quit), and quitting exits everything.
-            if overlay.desktop_mode_requested:
+            if overlay.desktop_mode_requested and (
+                    _entitlement is None or _entitlement.is_world_unlocked(world.name)):
                 # Derive the new drawable from the backing scale measured at
                 # startup (now correctly 2.0 on Retina thanks to the best-res
                 # surface), then re-assert the high-res surface after the resize.
@@ -626,6 +637,12 @@ def main() -> None:
                 desktop_active = True
                 overlay.desktop_mode_requested = False
                 print("[main] Desktop Mode active (in-process wallpaper)")
+            elif overlay.desktop_mode_requested:
+                # Locked world without Pro: cancel the request silently.
+                # The "Portal Pro · $7.99" button already communicates the gate;
+                # a toast on top of it is redundant noise.
+                overlay.desktop_mode_requested = False
+                print(f"[main] Desktop Mode blocked — '{world.name}' is a Pro world")
             if overlay.should_quit:
                 pygame.quit(); return
         else:

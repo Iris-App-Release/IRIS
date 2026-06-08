@@ -9,10 +9,11 @@ paths are redirected to a temp dir so the sim never touches ~/.iris.
   1. FLOATING DEFAULT — opens not-live, primary CTA "Enable Camera",
      status "Floating preview".
   2. ENABLE CAMERA — instantly flips to live (State B), raises tracking_requested,
-     persists onboarded; primary becomes "Enable Desktop Mode".
-  3. ENABLE DESKTOP — reverts demo to floating (live False), raises
-     desktop_mode_requested; on_desktop_enabled() → daemon running, primary
-     becomes "Disable Desktop Mode".
+     persists onboarded; primary becomes "Set as Desktop Background".
+  3. ENABLE DESKTOP — raises desktop_mode_requested WITHOUT clearing live (keeping
+     live=True avoids the tracker switching to scripted-idle for the transition frame,
+     which was the cause of the freeze-frame bug); on_desktop_enabled() → daemon
+     running, primary becomes "Disable Desktop Mode".
   4. PAUSE / RESUME — Disable writes the master-off flag and flips to a resume
      CTA; Resume clears it.
   5. REOPEN ROUTING — constructed with a running daemon opens straight into the
@@ -96,25 +97,34 @@ def main() -> int:
           repr(o._primary()))
     check("status reads 'Floating preview'", o._status_text() == "Floating preview")
 
-    # ── 2. Enable Camera → live, but Desktop Mode only AFTER camera is granted ──
-    print("\nEnable Camera:")
+    # ── 2. Enable Camera (routed via Settings; _set_camera_enabled starts tracking) ─
+    # Clicking primary navigates to Settings. The user enables camera there.
+    # _set_camera_enabled(True) is the single choke-point: it sets live +
+    # tracking_requested regardless of which code path calls it.
+    print("\nEnable Camera (routed via Settings):")
+    # Start from camera-disabled state (simulates first run / camera turned off).
+    o._set_camera_enabled(False)   # camera off — no toast in sim, state only
+    o._active_tab = "worlds"; o._compute_layout()
+    check("with camera off, primary shows 'Enable Camera for Desktop Mode'",
+          o._primary() == ("Enable Camera for Desktop Mode", "enable_camera"),
+          repr(o._primary()))
     _click(o, o, "primary")
-    check("flips to live (State B)", o.live is True)
-    check("raised tracking_requested", o.tracking_requested is True)
-    check("persisted onboarded", bool(o._pref("onboarded", False)) is True)
-    # The bottom action button OWNS one slot: while the camera is settling it
-    # reports the in-flight state and is a no-op — it does NOT yet offer Desktop
-    # Mode (the swap waits for the grant, per the new bottom-action spec).
+    check("clicking it navigates to Settings tab", o._active_tab == "settings")
+    # User enables camera from the Settings toggle (camera was off, so toggle → on).
+    o._click("camera_toggle")
+    check("_set_camera_enabled(True) sets live=True", o.live is True)
+    check("_set_camera_enabled(True) sets tracking_requested=True", o.tracking_requested is True)
+    o._active_tab = "worlds"; o._compute_layout()
     check("primary shows 'Starting camera…' while settling",
           o._primary() == ("Starting camera…", "none"), repr(o._primary()))
     o.notify_tracking_active()   # engine: real head data arrived → camera granted
-    check("primary becomes 'Enable Desktop Mode' once granted",
-          o._primary() == ("Enable Desktop Mode", "enable_desktop"), repr(o._primary()))
+    check("primary becomes 'Set as Desktop Background' once granted",
+          o._primary() == ("Set as Desktop Background", "enable_desktop"), repr(o._primary()))
 
-    # ── 3. Enable Desktop → revert to floating + daemon ────────────────────────
+    # ── 3. Enable Desktop → raise request WITHOUT clearing live (freeze-frame fix) ─
     print("\nEnable Desktop Mode:")
     _click(o, o, "primary")
-    check("reverted to floating (live False)", o.live is False)
+    check("live stays True (no scripted-idle switch = no freeze frame)", o.live is True)
     check("raised desktop_mode_requested", o.desktop_mode_requested is True)
     o.on_desktop_enabled()
     check("daemon_running after handoff", o.daemon_running is True)
@@ -196,23 +206,27 @@ def main() -> int:
     check("Worlds restores world-nav arrows", "world_prev" in o4._buttons)
 
     # ── 9. Camera-disable routing regression ───────────────────────────────────
-    # Bug: after the camera was granted then disabled again, the bottom action
-    # wrongly kept reading "Enable Desktop Mode". Disabling must revert it to the
-    # enable-camera label (since _camera_ready drops to False with no daemon).
+    # After camera is granted then disabled, the button must revert to
+    # "Enable Camera for Desktop Mode" → Settings routing.
     print("\nCamera-disable routing:")
     o5 = DemoOverlay(W, H, scale=S, daemon_running=False, desktop_paused=False)
-    o5._click("primary"); o5.notify_tracking_active()       # enable + grant
-    check("after grant → 'Enable Desktop Mode'",
-          o5._primary() == ("Enable Desktop Mode", "enable_desktop"), repr(o5._primary()))
+    # Grant camera via the Settings path (direct state manipulation, as the engine does)
+    o5._set_camera_enabled(True); o5.notify_tracking_active()
+    check("after grant → 'Set as Desktop Background'",
+          o5._primary() == ("Set as Desktop Background", "enable_desktop"), repr(o5._primary()))
     o5._set_camera_enabled(False)                            # disable camera access
-    check("after camera disabled → 'Enable Camera for Desktop Mode'",
+    check("after camera disabled → 'Enable Camera for Desktop Mode' → Settings",
           o5._primary() == ("Enable Camera for Desktop Mode", "enable_camera"),
           repr(o5._primary()))
     check("camera-disabled clears tracking_active", o5.tracking_active is False)
+    # Clicking it now routes to Settings (not a direct camera request).
+    _click(o5, o5, "primary")
+    check("clicking routes to Settings tab", o5._active_tab == "settings")
     # Clicking it re-enables access (otherwise the engine ignores the request).
-    o5._click("primary")
-    check("clicking enable re-enables camera access", o5.camera_enabled is True)
-    check("clicking enable raises tracking_requested", o5.tracking_requested is True)
+    o5._active_tab = "worlds"; o5._compute_layout()   # return from Settings
+    _click(o5, o5, "primary")
+    check("clicking after camera-off routes to Settings",
+          o5._active_tab == "settings")
 
     print()
     if _fail:

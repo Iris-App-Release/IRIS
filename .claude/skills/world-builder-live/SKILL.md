@@ -45,6 +45,31 @@ restart. The command prints the generated object JSON; relay it in plain languag
 (what, where in "back-left / near the glass" terms + the `grid_position`), and note
 that render confirmation is a GUI thing (offer `/run` or `/verify` if the app isn't up).
 
+## Step 1.5 — PARITY GATE (ALWAYS run before reporting a scene as correct)
+
+The Canvas Cube (oblique) and the live 3-D parallax are two projections of the same
+world. **Before you tell the user the scene is right, mathematically confirm the two
+previews agree** — don't eyeball it:
+```
+.venv/bin/python Scripts/validation/sim_wb_preview_parity.py --scene Worlds/grid_room/world.json
+```
+(`--scene` defaults to `Worlds/grid_room/world.json`; pass a path for a saved world.)
+
+Read its output before you respond:
+- **`RESULT: previews agree`** (exit 0) → safe to report. Relay the per-object
+  placement table (cell → canvas square → world → screen quadrant) in plain language.
+- **`parity check(s) FAILED`** (exit 1) → the two previews DISAGREE (e.g. an
+  inside-out primitive or a depth inversion). Do **not** report the scene as working;
+  treat it as a bug in the renderer layer (`/bug-fix`), not in the prompt.
+- **`⚠ … OUT OF RANGE and got clamped`** → this is the usual cause of "the object
+  spawned somewhere random": Claude placed it outside the box and it snapped to a
+  wall/floor. The advisory prints `requested → clamped` per object. Tell the user
+  exactly which object overshot and **re-run `preview` with a corrected prompt**
+  (or nudge the coordinate) rather than claiming success.
+
+This gate is the headless stand-in for "look at both previews." It is required after
+every `preview` and after every `save` (run it with the saved world's path).
+
 ## Step 2 — SAVE (= the in-app Save button)
 
 ```
@@ -53,6 +78,9 @@ that render confirmation is a GUI thing (offer `/run` or `/verify` if the app is
 Generates → commits a **new** `Worlds/<slug>/world.json` (a grid_room copy with the
 objects baked in and a prompt-derived name) that joins the Worlds-tab cycle, then
 resets the scratch. View it with `use <slug>` or by cycling the Worlds tab.
+
+After saving, run the **parity gate (Step 1.5)** against the new file before reporting
+success: `… sim_wb_preview_parity.py --scene Worlds/<slug>/world.json`.
 
 ## Step 3 — DELETE (= Settings → Delete World)
 
@@ -101,4 +129,5 @@ Source of truth for ranges/clamps: `Worlds/placeable.py` — never invent ranges
 ## Related
 - `/world-builder` — manual authoring (you write the JSON; no API call).
 - `obsidian-docs/architecture/grid-creator-tool-plan.md` — the plan this implements.
-- `Scripts/validation/sim_world_builder.py`, `sim_grid_api.py` — headless guards.
+- `Scripts/validation/sim_wb_preview_parity.py` — the oblique↔3-D preview parity gate
+  (Step 1.5); `sim_world_builder.py`, `sim_grid_api.py` — the other headless guards.

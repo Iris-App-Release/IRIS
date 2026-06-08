@@ -1,3 +1,11 @@
+---
+title: Obsidian Documentation Audit — Summary
+type: audit
+related: [DOCS_AUDIT_FINDINGS, design-decisions, known_issues]
+last_updated: 2026-06-01
+sources: [obsidian-docs/]
+---
+
 # Obsidian Documentation Audit — Summary Report
 **Completed:** 2026-06-01  
 **Status:** ✅ All inaccuracies fixed and verified
@@ -88,3 +96,7 @@ Conducted a deep accuracy audit comparing Obsidian documentation (`obsidian-docs
 
 **Audit completed by:** Claude  
 **Next review:** Recommended in 6-12 months or when new worlds/systems are added
+
+## Related
+
+[[DOCS_AUDIT_FINDINGS]] · [[design-decisions]] · [[known_issues]]

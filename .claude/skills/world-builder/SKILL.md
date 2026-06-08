@@ -86,7 +86,17 @@ right default for the neon grid aesthetic.
    `~/.iris/preferences.json` `"world": "grid_room"`. If the app is running it
    **hot-reloads** within a frame (no restart). If not, tell the user to open it
    (or offer `/verify` / the run flow) — render confirmation is a GUI-only thing.
-6. **Confirm** back to the user in plain language: what you placed, where (in
+6. **Parity gate (run before confirming)** — verify the oblique Canvas Cube and
+   the live 3-D preview agree on what you just wrote, instead of eyeballing it:
+   ```
+   .venv/bin/python Scripts/validation/sim_wb_preview_parity.py --scene Worlds/grid_room/world.json
+   ```
+   `RESULT: previews agree` (exit 0) = safe; relay its per-object placement table.
+   A `parity check(s) FAILED` means the two previews disagree (renderer bug → use
+   `/bug-fix`, not a re-author). A `⚠ … clamped` advisory means a coordinate was
+   out of range and snapped to a wall — fix that `grid_position` and rewrite, don't
+   report it as placed where the user asked.
+7. **Confirm** back to the user in plain language: what you placed, where (in
    both "back-left near the floor" terms and the `grid_position`), and anything
    you clamped or couldn't yet do.
 

@@ -63,6 +63,7 @@ Obsidian vault to browse them as a graph.
 | [Version History](releases/version-history.md) | The shipped DMGs (v0.0 → v1.5) and the productization arc | release |
 | [Distribution Checklist](releases/distribution-checklist.md) | Steps to cut, verify, and ship a new build | release |
 | [Version Control & GitHub](releases/version-control.md) | Git setup, what's tracked, pre-git history, GitHub Releases plan | infrastructure |
+| [Release Announcement v0.1](releases/RELEASE_ANNOUNCEMENT_0.1.md) | User-facing alpha release notes (v0.1) | release |
 
 ## Architecture
 
@@ -85,6 +86,8 @@ Obsidian vault to browse them as a graph.
 | [Known Issues](known_issues.md) | Tracked bugs → root cause → fix (durable bug records) | reference |
 | [Current Focus](development/current-focus.md) | What's actively being worked on right now | reference |
 | [Productification Roadmap](productification.md) | Commercial progression path: milestones, business model, risks, immediate actions | strategy |
+| [Project State of the Union](strategy/IRIS_PROJECT_STATE_OF_THE_UNION.md) | Definitive strategic operating manual: history, current state, productification analysis, open decisions, risks, 90-day roadmap, outcomes | strategy |
+| [Financial Projection](strategy/FINANCIAL_PROJECTION.md) | Three-scenario revenue/success estimation (conservative / realistic / optimistic) | strategy |
 
 ## Docs & metadata
 
@@ -93,6 +96,8 @@ Obsidian vault to browse them as a graph.
 | [Existing Docs Index](docs/docs-index.md) | Annotated map of the 12 hand-written source docs + preview screenshots | docs |
 | [Ingestion Log](log.md) | Append-only record of how this wiki was built + maintained | metadata |
 | [Handover](Handover.md) | Self-contained LLM context packet — system state, rules, decisions, next steps | metadata |
+| [Docs Audit — Findings](development/DOCS_AUDIT_FINDINGS.md) | 2026-06-01 accuracy audit of the wiki vs. source: 6 inaccuracies found + fixed | audit |
+| [Docs Audit — Summary](development/DOCS_AUDIT_SUMMARY.md) | Summary report of the 2026-06-01 documentation audit | audit |
 
 ## How this wiki is organized
 

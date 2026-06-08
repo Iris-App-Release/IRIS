@@ -8,6 +8,19 @@
 
 The Obsidian wiki (`obsidian-docs/`) is the authoritative design reference for this project.
 
+**Where generated docs go — never create `.md` files in the repo root.** `obsidian-docs/`
+is the folder the user has open as an Obsidian vault. ALL strategy, analysis, planning,
+audit, projection, and Claude-generated context notes belong inside it so they show up in
+that vault. The only markdown that stays at the repo root is `CLAUDE.md` and `README.md`
+(functional files Claude Code / GitHub read from root). Use the existing subfolders:
+- `strategy/` — roadmaps, financial projections, state-of-the-union, business analysis
+- `development/` — in-progress notes, audits, investigations
+- `releases/` — release notes / announcements
+- `architecture/` · `systems/` · `worlds/` · `world-builder/` — as named
+
+Give every new vault note YAML frontmatter (`title`, `type`, `related`, `last_updated`,
+`sources`) and link related notes with `[[wikilinks]]` so they join the graph/backlinks.
+
 ---
 
 ## Project in one sentence
@@ -48,6 +61,7 @@ frustum to make the monitor appear to be a window into a live 3D world.
 - `/bug-fix` — investigate and fix something broken; front-loads debugging wisdom
 - `/new-world` — scaffold a new world (`Worlds/<name>/world.json`); checks renderer compatibility
 - `/verify` — run the app and observe behaviour to confirm a change works
+- `/dev-mode` — toggle Dev Mode (unlock all worlds + reveal World Builder) / inspect the world paywall
 
 ---
 

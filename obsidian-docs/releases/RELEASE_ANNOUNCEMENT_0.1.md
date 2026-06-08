@@ -1,3 +1,12 @@
+---
+title: Release Announcement — IRIS v0.1 Alpha
+type: release
+related: [version-history, distribution-checklist, productification]
+last_updated: 2026-06-06
+version: "0.1"
+sources: [obsidian-docs/releases/version-history.md]
+---
+
 # IRIS v0.1 Alpha Release
 
 IRIS turns your display into a window into a 3D world. As you move your head, the scene shifts perspective in real time, creating the illusion of depth behind the screen.
@@ -37,3 +46,7 @@ This is **v0.1** — expect bugs, rough UI, and occasional glitches. This is a t
 Report bugs, tracking issues, performance problems, and feature ideas. Your feedback shapes what IRIS becomes next.
 
 Thank you for testing something this early! 👁️
+
+## Related
+
+[[version-history]] · [[distribution-checklist]] · [[productification]]

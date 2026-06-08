@@ -425,6 +425,22 @@ class DemoOverlay:
         # bumps on every Send/Save/clear so the signature-cached surface invalidates.
         self._wb_preview_objects: list[dict] = []
         self._wb_preview_gen = 0
+
+        # Entitlement (Dev Mode / world paywall). Built once, read live. Defensive:
+        # if licensing can't import, World Builder defaults to "Coming soon" (the
+        # safe shipped state) and nothing else is blocked.
+        try:
+            from Licensing.entitlement import EntitlementChecker
+            self._entitlement = EntitlementChecker()
+        except Exception:
+            self._entitlement = None
+        # Settings → License Key entry flow.
+        self._license_input   = ""        # text the user is typing
+        self._license_focused = False     # input field has keyboard focus
+        self._license_open    = False     # "Redeem key" section is expanded
+        self._license_fail    = False     # show "Key not recognised" hint
+        self._license_rect    = None      # input field rect (set in layout)
+
         # Settings → Delete World flow: a toggleable list of user worlds, then a
         # Yes/No confirmation modal for the chosen one. `_delete_target` is the slug
         # awaiting confirmation (None = no modal); `_delete_card` is its modal rect.
@@ -564,24 +580,38 @@ class DemoOverlay:
         return bool(self.tracking_active or self.daemon_running)
 
     def _primary(self) -> tuple[str, str]:
-        """The single bottom-centred action. Owns one slot:
-          • before the camera is granted  → "Enable Camera for Desktop Mode"
-          • while it is settling          → "Starting camera…" (no-op)
-          • once granted                  → the Desktop Mode control
-        Identical positioning/sizing/styling across the swap. The enable-camera
-        label spells out that the camera is the path to Desktop Mode, and it is
-        what shows on first open AND whenever camera access is disabled (the
-        click re-enables access, see _click)."""
-        if not self._camera_ready():
-            if self.live and not self.camera_denied:
-                return ("Starting camera…", "none")     # in-flight, immediate feedback
-            return ("Enable Camera for Desktop Mode", "enable_camera")
-        # Camera granted → Desktop Mode controls.
+        """The single bottom-centred action. Priority order:
+          1. Locked world + not Pro  → "Portal Pro  ·  $7.99" (opens Settings)
+          2. Desktop already active  → disable / resume controls
+          3. Camera warming up       → "Starting camera…" (no-op)
+          4. Camera ready            → "Set as Desktop Background"
+          5. Camera not yet enabled  → "Enable Camera for Desktop Mode"
+        """
+        # 1. Locked world takes priority — show purchase CTA instead of any
+        #    camera/desktop prompt (the user can't use it anyway).
+        try:
+            if (self._entitlement is not None
+                    and not self._entitlement.is_world_unlocked(self.active_world)):
+                return ("Portal Pro  ·  $7.99", "unlock_pro")
+        except Exception:
+            pass
+
+        # 2. Desktop mode already active (in-process wallpaper running).
         if self.daemon_running and not self.desktop_paused:
             return ("Disable Desktop Mode", "disable_desktop")
         if self.daemon_running and self.desktop_paused:
             return (STRINGS["demo_ui"]["buttons"]["resume_desktop"], "resume_desktop")
-        return (STRINGS["demo_ui"]["buttons"]["enable_desktop"], "enable_desktop")
+
+        # 3. Camera requested but not yet reporting data.
+        if self.live and not self.tracking_active and not self.camera_denied:
+            return ("Starting camera…", "none")
+
+        # 4. Camera is tracking — offer the wallpaper action.
+        if self._camera_ready():
+            return ("Set as Desktop Background", "enable_desktop")
+
+        # 5. Camera not enabled yet.
+        return ("Enable Camera for Desktop Mode", "enable_camera")
 
     @property
     def preview_active(self) -> bool:
@@ -613,6 +643,86 @@ class DemoOverlay:
             return st["live_tracking"]
         return st["floating_preview"]
 
+    def _wb_available(self) -> bool:
+        """Whether the World Builder tab is live (vs. 'Coming soon'). True only in
+        Dev Mode (or once World Builder officially launches). Fails to 'Coming
+        soon' if licensing is unavailable — the safe shipped default."""
+        try:
+            return bool(self._entitlement.world_builder_available())
+        except Exception:
+            return False
+
+    # ── Entitlement helpers ───────────────────────────────────────────────────────
+
+    def _is_premium(self) -> bool:
+        """True if this device has an active Pro licence. Crash-proof."""
+        try:
+            return bool(self._entitlement.is_premium())
+        except Exception:
+            return False
+
+    def _open_store_url(self) -> None:
+        """Open the Lemon Squeezy checkout page in the default browser."""
+        try:
+            from Licensing.entitlement import LS_STORE_URL
+            if LS_STORE_URL:
+                import subprocess
+                subprocess.Popen(["open", LS_STORE_URL])
+            else:
+                self._toast_msg("Store link not set yet — check back soon", 2.5)
+        except Exception:
+            pass
+
+    def _license_handle_key(self, ev) -> None:
+        """Edit the license key input from a KEYDOWN while the field is focused.
+
+        Keys are forced to upper-case because LS license keys are uppercase strings.
+        Enter/Return submits (if non-empty). Same pattern as _wb_handle_key."""
+        if ev.key == pygame.K_ESCAPE:
+            self._license_focused = False
+            return
+        if ev.key == pygame.K_BACKSPACE:
+            self._license_input = self._license_input[:-1]
+            self._license_fail = False
+            return
+        if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+            if self._license_input.strip():
+                self._try_activate()
+            return
+        ch = ev.unicode
+        if ch and ch.isprintable() and len(self._license_input) < 40:
+            self._license_input += ch.upper()
+            self._license_fail = False
+
+    def _try_activate(self) -> None:
+        """Validate the typed license key against Lemon Squeezy and unlock Pro."""
+        code = self._license_input.strip()
+        if not code:
+            return
+        self._license_focused = False
+        self._toast_msg("Checking key…", 10.0)
+        try:
+            ok = bool(self._entitlement.activate(code))
+        except Exception:
+            ok = False
+        if ok:
+            self._license_open  = False
+            self._license_input = ""
+            self._license_fail  = False
+            self._compute_layout()
+            self._toast_msg("Pro unlocked — enjoy all worlds!", 4.0)
+        else:
+            self._license_fail = True
+            self._compute_layout()
+            self._toast_msg("Key not recognised — check your purchase email", 3.5)
+
+    def show_locked_upsell(self, world_name: str) -> None:
+        """A locked (Pro) world previews freely but can't be set as the wallpaper
+        until unlocked. Called by app_engine when Desktop Mode is blocked — surface
+        the one-time unlock instead of switching to wallpaper."""
+        pretty = (world_name or "").replace("_", " ").title()
+        self._toast_msg(f"{pretty} is a Pro world — unlock all worlds for $7.99", secs=3.2)
+
     def _toast_msg(self, text, secs=2.4) -> None:
         self._toast = (text, self._now() + secs)
 
@@ -628,9 +738,15 @@ class DemoOverlay:
 
     def _set_camera_enabled(self, enabled: bool) -> None:
         """Enable/disable camera access. Writes the flag file the engine polls
-        live (and mirrors the choice to preferences for persistence/display). On
-        DISABLE we also drop out of live mode so the demo falls back to the
-        scripted floating preview instead of a stalled tracker frame."""
+        live (and mirrors the choice to preferences for persistence/display).
+
+        ON: also requests tracking so the engine starts the tracker immediately —
+        this is the single choke-point for camera-on regardless of how it is
+        called (Settings toggle, first-run flow, etc.), so the parallax activates
+        in ALL world previews as soon as camera access is granted.
+
+        OFF: drops back to floating preview (scripted idle) so the scene never
+        stalls on a frozen tracker frame."""
         self.camera_enabled = bool(enabled)
         try:
             CONFIG_DIR.mkdir(exist_ok=True)
@@ -641,15 +757,22 @@ class DemoOverlay:
         except Exception:
             pass
         self._save_pref("camera_enabled", self.camera_enabled)
-        if not enabled:
-            self.live = False                  # back to floating preview (idle)
-            # Camera is off → tracking is no longer active, so _camera_ready()
-            # must drop back to False (unless a desktop daemon is running). Without
-            # this the bottom action wrongly kept reading "Enable Desktop Mode"
-            # after the camera was disabled again.
+        if enabled:
+            # Request tracking so the engine starts the tracker on its next tick.
+            # Without these, _camera_ready() stays False and the button never
+            # advances past "Enable Camera for Desktop Mode".
+            self.tracking_requested = True
+            self.live               = True
+            self.tracking_active    = False   # will flip True once data flows
+            self.camera_denied      = False
+            if not self.onboarded:
+                self.onboarded = True
+                self._save_pref("onboarded", True)
+        else:
+            self.live            = False
             self.tracking_active = False
             self.camera_denied   = False
-        self._toast_msg("Camera access on" if enabled else "Camera access off", 2.2)
+        self._toast_msg("Camera on" if enabled else "Camera off", 1.8)
 
     def on_desktop_enabled(self) -> None:
         """Called by the engine once the wallpaper daemon is spawned: the demo
@@ -776,6 +899,35 @@ class DemoOverlay:
                         self._buttons[f"del:{k}"] = pygame.Rect(
                             w // 2 - cam_btn_w // 2, ry, cam_btn_w, row_h)
                         ry += row_h + row_gap
+                # Pro license section — sits below delete_world (or its open list).
+                # `_lic_top` is computed from the lowest existing settings button so
+                # the section never overlaps the delete list when it is expanded.
+                lowest = self._buttons["delete_world"].bottom
+                for bk, br in self._buttons.items():
+                    if bk.startswith("del:"):
+                        lowest = max(lowest, br.bottom)
+                self._lic_top = lowest + int(32 * S)
+                if not self._is_premium():
+                    self._license_rect = None
+                    self._buttons["license_buy"] = pygame.Rect(
+                        w // 2 - cam_btn_w // 2, self._lic_top,
+                        cam_btn_w, cam_btn_h)
+                    redeem_h = int(40 * S)
+                    redeem_y = self._buttons["license_buy"].bottom + int(10 * S)
+                    self._buttons["license_redeem"] = pygame.Rect(
+                        w // 2 - cam_btn_w // 2, redeem_y, cam_btn_w, redeem_h)
+                    if self._license_open:
+                        input_y = self._buttons["license_redeem"].bottom + int(12 * S)
+                        input_h = int(46 * S)
+                        self._license_rect = pygame.Rect(
+                            w // 2 - cam_btn_w // 2, input_y, cam_btn_w, input_h)
+                        self._buttons["license_input"] = self._license_rect
+                        if self._license_input.strip():
+                            act_y = self._license_rect.bottom + int(10 * S)
+                            self._buttons["license_activate"] = pygame.Rect(
+                                w // 2 - cam_btn_w // 2, act_y,
+                                cam_btn_w, cam_btn_h)
+
                 if self._delete_target is not None:
                     cw, chh = int(440 * S), int(232 * S)
                     card = pygame.Rect(w // 2 - cw // 2, h // 2 - chh // 2, cw, chh)
@@ -788,7 +940,7 @@ class DemoOverlay:
                     self._buttons["del_confirm_yes"] = pygame.Rect(
                         w // 2 + cgap // 2, by, bw, bh)
 
-            elif self._active_tab == "world_builder":
+            elif self._active_tab == "world_builder" and self._wb_available():
                 # Both WB nav controls live on the tab-bar ROW as detached grey
                 # mini-bars holding a single tab-style pill — same top/height as
                 # the main tab bar, but visually disconnected from it.
@@ -873,9 +1025,11 @@ class DemoOverlay:
         elif ev.type == pygame.MOUSEBUTTONUP and ev.button == 1:
             self._press_key = None
         elif ev.type == pygame.KEYDOWN:
-            # While the World Builder prompt is focused, keystrokes edit the text
-            # (so typing "q" doesn't quit the app); Esc just blurs the field.
-            if self._wb_focused:
+            # While a text field is focused, keystrokes edit it (so typing "q"
+            # doesn't quit the app); priority: license input > WB prompt > global.
+            if self._license_focused:
+                self._license_handle_key(ev)
+            elif self._wb_focused:
                 self._wb_handle_key(ev)
             elif ev.key in (pygame.K_ESCAPE, pygame.K_q):
                 self.should_quit = True
@@ -893,10 +1047,27 @@ class DemoOverlay:
         # anywhere else (Send, Save, empty space, another tab) blurs it.
         if self._active_tab == "world_builder" and self._wb_view == "grid":
             self._wb_focused = (key == "wb_prompt")
+        # License key input focus: clicking the input focuses it; anything else blurs.
+        if self._active_tab == "settings":
+            self._license_focused = (key == "license_input")
         if key is None:
             return
         if key == "wb_prompt":
             return                         # focus already set above; nothing else
+        if key == "license_buy":
+            self._open_store_url()
+            return
+        if key == "license_redeem":
+            self._license_open = not self._license_open
+            self._license_focused = False
+            self._license_fail = False
+            self._compute_layout()
+            return
+        if key == "license_input":
+            return                         # focus already set in focus block above
+        if key == "license_activate":
+            self._try_activate()
+            return
         if key == "wb_restart":
             self._wb_restart()
             return
@@ -933,25 +1104,31 @@ class DemoOverlay:
             return
         if key == "primary":
             _label, action = self._primary()
+            if action == "unlock_pro":
+                # Locked world: navigate to Settings with the license section open
+                # so the user can purchase immediately.
+                self._active_tab = "settings"
+                self._license_open = True
+                self._compute_layout()
+                return
             if action == "enable_camera":
-                # If camera access was turned off in Settings, the engine ignores
-                # tracking_requested while the camera_off flag exists — so clicking
-                # "Enable Camera for Desktop Mode" here would be a dead button.
-                # Re-enable access first so the click actually starts the camera.
-                if not self.camera_enabled:
-                    self._set_camera_enabled(True)
-                self.tracking_requested = True
-                self.live = True
-                self.tracking_active = False
-                self.camera_denied = False
-                if not self.onboarded:
-                    self.onboarded = True
-                    self._save_pref("onboarded", True)
-                self._toast_msg("Starting camera…", 2.0)
+                # Route to Settings where the user can enable camera access.
+                # This avoids triggering an unexpected permission dialog on click
+                # and gives the user a clear, guided path to turn the camera on.
+                self._active_tab = "settings"
+                self._compute_layout()
             elif action == "enable_desktop":
+                # Clear any leftover pause flag BEFORE requesting desktop mode.
+                # If the user previously clicked "Disable Desktop Mode", the flag
+                # ~/.parallax_off is left on disk. The wallpaper branch checks it on
+                # its very first tick — so without this clear, the engine activates
+                # desktop mode and immediately pauses it again (the "freeze frame"
+                # symptom: one static frame then the parallax stops).
+                # Do NOT set self.live = False: that switches the engine to scripted-
+                # idle for the transition frame, re-introducing the freeze via a
+                # different path (the static idle position bakes into the wallpaper).
+                self._set_paused(False)
                 self.desktop_mode_requested = True
-                self.live = False
-                self._toast_msg("Entering Desktop Mode…", 4.0)
             elif action == "disable_desktop":
                 self._set_paused(True)
                 self._toast_msg(STRINGS["demo_ui"]["toasts"]["desktop_paused"], 2.2)
@@ -1236,6 +1413,10 @@ class DemoOverlay:
             self._active_tab, self._wb_view, self.active_world, self.camera_enabled,
             self._wb_prompt, self._wb_focused, self._wb_preview_gen,
             self._delete_list_open, self._delete_target, tuple(self._world_keys),
+            self._wb_available(),                          # re-render when Dev Mode flips
+            self._is_premium(),                            # re-render on Pro unlock / badge
+            self._license_open, self._license_focused,
+            self._license_input, self._license_fail,
             self._toast[0] if self._toast else None,
             self._press_key,
             tuple(round(self._hover_anim.get(k, 0.0), 2) for k in self._buttons),
@@ -1331,9 +1512,13 @@ class DemoOverlay:
             _grey_container(layer, self._action_group, s=S)
             _text_shadow(layer, self._status_text(), self.fnt_status,
                          GREY_TEXT, self._status_rect.center, S)
-            label, _ = self._primary()
+            label, _action = self._primary()
+            # "Portal Pro · $7.99" gets the amber accent style so it reads as a
+            # purchase CTA, not a standard action button.
+            _btn_variant = "accent" if _action == "unlock_pro" else "primary"
+            _btn_dark    = _action != "unlock_pro"
             self._draw_btn(layer, self._buttons["primary"], label,
-                           "primary", "lg", dark=True, key="primary")
+                           _btn_variant, "lg", _btn_dark, key="primary")
 
         # ── Settings tab — blank white page + camera-access toggle ────────────
         elif self._active_tab == "settings":
@@ -1377,9 +1562,61 @@ class DemoOverlay:
                         layer.blit(dl, dl.get_rect(
                             midright=(rr.right - int(18 * S), rr.centery)))
 
+            # Pro license section — below Delete World.
+            if self._is_premium():
+                pro_y = getattr(self, "_lic_top", None)
+                if pro_y:
+                    _text_shadow(layer, "Pro  ·  Active  ✓",
+                                 self.fnt_hint, ACCENT_ORANGE, (cx, pro_y + int(14 * S)), S)
+            else:
+                if "license_buy" in self._buttons:
+                    self._draw_btn(layer, self._buttons["license_buy"],
+                                   "Portal Pro  ·  $7.99 USD", "accent", "lg",
+                                   dark=False, key="license_buy")
+                if "license_redeem" in self._buttons:
+                    label = ("▲ Hide" if self._license_open else "Already bought?  Redeem key →")
+                    self._draw_btn(layer, self._buttons["license_redeem"],
+                                   label, "secondary", "md", dark=False,
+                                   key="license_redeem")
+                if self._license_open and self._license_rect:
+                    fld = self._license_rect
+                    rad = int(_BTN_CORNER * S)
+                    _aa_round_rect(layer, fld, GOLD_RIM_SOFT, rad)
+                    bw = max(1, int(1 * S))
+                    _aa_round_rect(layer, fld.inflate(-2 * bw, -2 * bw),
+                                   PANEL_SURFACE_2, max(1, rad - bw))
+                    if self._license_focused:
+                        pygame.draw.rect(layer, ACCENT_ORANGE, fld,
+                                         width=max(1, int(2 * S)), border_radius=rad)
+                    if self._license_input:
+                        shown = self._license_input + ("|" if self._license_focused else "")
+                        color = INK
+                    elif self._license_focused:
+                        shown, color = "|", ACCENT_ORANGE
+                    else:
+                        shown, color = "Paste or type your license key…", INK_SOFT
+                    t = self.fnt_hint.render(shown, True, color)
+                    layer.blit(t, t.get_rect(center=fld.center))
+                    if self._license_fail:
+                        _text_shadow(layer, "Key not recognised — check your purchase email",
+                                     self.fnt_small, (190, 50, 40),
+                                     (cx, fld.bottom + int(14 * S)), S)
+                if "license_activate" in self._buttons:
+                    self._draw_btn(layer, self._buttons["license_activate"],
+                                   "Activate", "accent", "lg", dark=False,
+                                   key="license_activate")
+
         # ── World Builder tab — grid editor / live preview ────────────────────
         elif self._active_tab == "world_builder":
-            if self._wb_view == "grid":
+            if not self._wb_available():
+                # Not in Dev Mode → World Builder is gated until launch. Mirror the
+                # Community tab's placeholder so the tab reads as "Coming soon".
+                layer.fill(PAGE_BG)                         # warm off-white page
+                _text_shadow(layer, "World Builder", self.fnt_btn, INK,
+                             (cx, self._content_top), S)
+                _text_shadow(layer, "Coming Soon", self.fnt_hint, GREY_TEXT_DIM,
+                             (cx, self.h // 2), S)
+            elif self._wb_view == "grid":
                 # Grid editor: warm off-white page with the cube floating at the
                 # centre between two elevated WHITE cards (soft neumorphism).
                 layer.fill(PAGE_BG)                         # warm off-white page
@@ -1531,7 +1768,8 @@ class DemoOverlay:
         # with the same front-lit shadow as the top bar.
         if (hasattr(self, "_bottombar") and self._bottombar
                 and self._active_tab == "world_builder"
-                and self._wb_view == "grid"):
+                and self._wb_view == "grid"
+                and self._wb_available()):   # hide in "Coming soon" state
             _front_lit_shadow(surf, self._bottombar, tb_rad, (
                 (int(6 * S), 16),
                 (int(3 * S), 28),
@@ -1790,9 +2028,10 @@ class DemoOverlay:
         except Exception:
             D = 8                                   # grid_room default
             objs = self._wb_preview_objects or []
-        ANG = math.radians(30.0)
-        ca, sa = math.cos(ANG), math.sin(ANG)       # exact 30° oblique direction
-        dr = 0.55                                   # depth foreshortening (cabinet-ish)
+        # Oblique constants + the projection come from Worlds.oblique — the SAME
+        # source the sprite renderer (canvas_mesh_renderer) and the parity sim use,
+        # so the Canvas Cube, the object sprites, and the 3-D preview cannot drift.
+        from Worlds.oblique import CA as ca, SA as sa, DR as dr, project as _oproj
 
         # Available builder area: the gap BETWEEN the two premium side panels,
         # below the tab bar. The cube is centred in this central column and fits
@@ -1820,8 +2059,8 @@ class DemoOverlay:
         oy = rcy - (D * v * sa - D * u) / 2.0
 
         def P(gx, gy, gz):
-            return (int(ox + gx * u - gz * v * ca),
-                    int(oy - gy * u + gz * v * sa))
+            sx, sy = _oproj(gx, gy, gz, u, ox, oy)
+            return (int(sx), int(sy))
 
         GRID = GRID_LINE                            # very subtle interior grid lines
         EDGE = CUBE_EDGE                            # soft receding edges + front frame
@@ -1906,14 +2145,18 @@ class DemoOverlay:
         # two views render a byte-identical object set.
         if objs:
             from Worlds.placeable import grid_to_canvas_cell, sanitize_objects
+            from Worlds.oblique import view_depth
             items = []
             for o in sanitize_objects(objs, D):
                 cgx, cgy, cgz = grid_to_canvas_cell(*o["grid_position"], D)
-                items.append((cgz, cgx, cgy, o))
-            # Painter's order: back wall (cgz≈0, farthest) first → glass (cgz≈D,
-            # nearest) last, so nearer objects correctly overlap farther ones.
+                items.append((view_depth(cgx, cgy, cgz), cgx, cgy, cgz, o))
+            # Painter's OCCLUSION order for the 30° oblique view (viewpoint is
+            # front-right-above): sort by depth ALONG the oblique view direction,
+            # farthest first, so a nearer opaque sprite overdraws anything hidden
+            # behind it. Sorting by cgz alone is wrong — it ignores the view's +x/+y,
+            # so a dot on the hidden (left/back) side of a sphere paints on top.
             items.sort(key=lambda t: t[0])
-            for cgz, cgx, cgy, o in items:
+            for _vd, cgx, cgy, cgz, o in items:
                 self._draw_canvas_object(layer, P, u, cgx, cgy, cgz, o, S)
 
     def _draw_canvas_object(self, layer, P, u, cgx, cgy, cgz, obj, S) -> None:

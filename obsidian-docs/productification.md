@@ -1,7 +1,7 @@
 ---
 title: Productification Roadmap
 type: strategy
-related: [design-decisions, version-history, distribution-checklist, world-system, worlds-index, dmg-build-process, current-focus, constraints, known_issues, system-interactions, menu-bar-ui, grid-api-customization]
+related: [design-decisions, version-history, distribution-checklist, world-system, worlds-index, dmg-build-process, current-focus, constraints, known_issues, system-interactions, menu-bar-ui, grid-api-customization, IRIS_PROJECT_STATE_OF_THE_UNION, FINANCIAL_PROJECTION]
 last_updated: 2026-06-02
 sources: [Docs/IRIS_OVERVIEW.txt, Docs/FIRST_LAUNCH_AND_DMG_DESIGN.md, obsidian-docs/releases/version-history.md, obsidian-docs/architecture/design-decisions.md, obsidian-docs/architecture/constraints.md, obsidian-docs/releases/distribution-checklist.md]
 ---
@@ -413,4 +413,4 @@ Ordered strictly by dependency and leverage:
 
 ## Related
 
-[[design-decisions]] · [[version-history]] · [[distribution-checklist]] · [[world-system]] · [[worlds-index]] · [[dmg-build-process]] · [[current-focus]] · [[constraints]] · [[known_issues]] · [[system-interactions]]
+[[design-decisions]] · [[version-history]] · [[distribution-checklist]] · [[world-system]] · [[worlds-index]] · [[dmg-build-process]] · [[current-focus]] · [[constraints]] · [[known_issues]] · [[system-interactions]] · [[IRIS_PROJECT_STATE_OF_THE_UNION]] · [[FINANCIAL_PROJECTION]]
